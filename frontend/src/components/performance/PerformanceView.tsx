@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import type { PerformanceRefreshResponse, PerformanceResponse } from '../../types/api';
-import { fmtSignedPercent } from '../../app/formatters';
+import { fmtSignedPercent, fmtTimeHm } from '../../app/formatters';
 import { Pager } from '../common/Pager';
 
 // 이 컴포넌트는 누적 성과 요약과 테이블을 렌더링한다.
@@ -89,7 +89,10 @@ export function PerformanceView({ loading, data, onPageChange, onQuickRefresh, q
                 <td>{trade.grade}</td>
                 <td>{trade.name}</td>
                 <td>{trade.ticker}</td>
-                <td>{trade.entry.toLocaleString('ko-KR')}</td>
+                <td>
+                  <div>{trade.entry.toLocaleString('ko-KR')}</div>
+                  <div className="muted-text">{trade.entry_time ? `${fmtTimeHm(trade.entry_time)} 기준` : '-'}</div>
+                </td>
                 <td>{trade.buy_date ?? trade.date}</td>
                 <td>{trade.eval_date ?? '-'}</td>
                 <td>{formatPrice(trade.eval_08_price)} <span className={`outcome-pill ${trade.outcome_08.toLowerCase()}`}>{formatOutcome(trade.outcome_08)}</span></td>

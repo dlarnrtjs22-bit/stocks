@@ -225,6 +225,7 @@ class PerformanceService:
                     key=safe_int(row.get('tracked_id'), safe_int(row.get('signal_rank'), 0)),
                     date=buy_date,
                     buy_date=buy_date,
+                    entry_time=row.get('entry_time').isoformat() if row.get('entry_time') else None,
                     grade=grade,
                     name=name,
                     ticker=code,

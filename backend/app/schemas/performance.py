@@ -56,6 +56,7 @@ class PerformanceTradeItem(BaseModel):
     key: int
     date: str
     buy_date: str | None = None
+    entry_time: str | None = None
     grade: str
     name: str
     ticker: str

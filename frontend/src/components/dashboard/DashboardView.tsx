@@ -88,6 +88,41 @@ export function DashboardView({
             <div className="inline-status">
               {data.account.note || '계좌 응답이 연결되었습니다.'} 보유종목 {fmtNumber(data.account.holdings_count)}건 / 추정자산 {fmtWon(data.account.estimated_assets)}
             </div>
+            {data.account.positions.length ? (
+              <div className="table-panel">
+                <div className="section-title">보유 종목</div>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>종목명</th>
+                      <th>티커</th>
+                      <th>보유수량</th>
+                      <th>주문가능</th>
+                      <th>평단가</th>
+                      <th>현재가</th>
+                      <th>수익률</th>
+                      <th>평가손익</th>
+                      <th>평가금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.account.positions.map((position) => (
+                      <tr key={`${position.ticker}-${position.stock_name}`}>
+                        <td>{position.stock_name}</td>
+                        <td>{position.ticker}</td>
+                        <td>{fmtNumber(position.quantity)}</td>
+                        <td>{fmtNumber(position.available_qty)}</td>
+                        <td>{fmtWon(position.avg_price)}</td>
+                        <td>{fmtWon(position.current_price)}</td>
+                        <td>{fmtSignedPercent(position.profit_rate)}</td>
+                        <td>{fmtSignedWon(position.profit_amount)}</td>
+                        <td>{fmtWon(position.eval_amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </>
         ) : (
           <div className="muted-text">{data.account.note}</div>

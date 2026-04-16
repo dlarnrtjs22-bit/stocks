@@ -143,6 +143,7 @@ export interface PerformanceTradeItem {
   key: number;
   date: string;
   buy_date?: string | null;
+  entry_time?: string | null;
   grade: string;
   name: string;
   ticker: string;
@@ -267,6 +268,19 @@ export interface DashboardAccountPayload {
   avg_fill_latency_ms: number;
   est_slippage_bps: number;
   note: string;
+  positions: DashboardAccountPosition[];
+}
+
+export interface DashboardAccountPosition {
+  ticker: string;
+  stock_name: string;
+  quantity: number;
+  available_qty: number;
+  avg_price: number;
+  current_price: number;
+  eval_amount: number;
+  profit_amount: number;
+  profit_rate: number;
 }
 
 export interface DashboardPickPayload {

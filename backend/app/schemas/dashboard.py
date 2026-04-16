@@ -39,6 +39,19 @@ class DashboardAccountPayload(BaseModel):
     avg_fill_latency_ms: float = 0.0
     est_slippage_bps: float = 0.0
     note: str = ''
+    positions: list['DashboardAccountPosition'] = Field(default_factory=list)
+
+
+class DashboardAccountPosition(BaseModel):
+    ticker: str
+    stock_name: str
+    quantity: int = 0
+    available_qty: int = 0
+    avg_price: float = 0.0
+    current_price: float = 0.0
+    eval_amount: int = 0
+    profit_amount: int = 0
+    profit_rate: float = 0.0
 
 
 class DashboardPickPayload(BaseModel):

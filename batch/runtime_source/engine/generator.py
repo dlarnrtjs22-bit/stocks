@@ -8,6 +8,7 @@
 
 import asyncio
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 import time
 import sys
@@ -28,6 +29,9 @@ from engine.models import (
 from engine.collectors import KRXCollector, EnhancedNewsCollector
 from engine.external_market_context import get_external_market_context
 from engine.freshness import assert_data_ready_for_run
+
+
+SEOUL_TZ = ZoneInfo("Asia/Seoul")
 from engine.news_window import describe_news_window
 from engine.scorer import Scorer
 from engine.scoring_constants import TOTAL_RULE_SCORE_MAX
@@ -497,7 +501,7 @@ class SignalGenerator:
                 market=stock.market,
                 sector=stock.sector,
                 signal_date=target_date,
-                signal_time=datetime.now(),
+                signal_time=datetime.now(SEOUL_TZ),
                 grade=grade,
                 score=score,
                 checklist=checklist,

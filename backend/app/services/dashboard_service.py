@@ -11,7 +11,7 @@ from batch.runtime_source.engine.llm_analyzer import LLMAnalyzer
 from batch.runtime_source.engine.theme_classifier import infer_theme
 from batch.runtime_source.providers.kiwoom_client import KiwoomRESTClient
 from backend.app.repositories.dashboard_repository import DashboardRepository
-from backend.app.schemas.dashboard import DashboardAccountPayload, DashboardMarketItem, DashboardPickPayload, DashboardResponse
+from backend.app.schemas.dashboard import DashboardAccountPayload, DashboardAccountPosition, DashboardMarketItem, DashboardPickPayload, DashboardResponse
 from backend.app.services.view_helpers import infer_signal_grade, safe_dt, safe_float, safe_int
 
 
@@ -261,10 +261,12 @@ class DashboardService:
         program_rows = self.repository.fetch_program_rows()
         candidate_rows = self.repository.fetch_latest_candidates()
         account_row = self.repository.fetch_account_snapshot()
+        account_positions_rows = self.repository.fetch_account_positions(account_row.get("account_no") if account_row else None)
         account_note = "계좌는 Dashboard Refresh 시에만 조회를 시도합니다."
         if refresh_account:
             account_note = self._attempt_refresh_account()
             account_row = self.repository.fetch_account_snapshot()
+            account_positions_rows = self.repository.fetch_account_positions(account_row.get("account_no") if account_row else None)
 
         markets, market_summary = self._build_market_summary(market_rows, program_rows)
         picks_rows = self._select_picks(candidate_rows)
@@ -333,7 +335,22 @@ class DashboardService:
                 )
             )
 
-        account = DashboardAccountPayload(note=account_note)
+        account_positions = [
+            DashboardAccountPosition(
+                ticker=str(row.get("ticker", "")).zfill(6),
+                stock_name=str(row.get("stock_name", "") or ""),
+                quantity=safe_int(row.get("quantity")),
+                available_qty=safe_int(row.get("available_qty")),
+                avg_price=safe_float(row.get("avg_price")),
+                current_price=safe_float(row.get("current_price")),
+                eval_amount=safe_int(row.get("eval_amount")),
+                profit_amount=safe_int(row.get("profit_amount")),
+                profit_rate=safe_float(row.get("profit_rate")),
+            )
+            for row in account_positions_rows
+        ]
+
+        account = DashboardAccountPayload(note=account_note, positions=account_positions)
         if account_row:
             account = DashboardAccountPayload(
                 available=True,
@@ -352,6 +369,7 @@ class DashboardService:
                 avg_fill_latency_ms=safe_float(account_row.get("avg_fill_latency_ms")),
                 est_slippage_bps=safe_float(account_row.get("est_slippage_bps")),
                 note=account_note,
+                positions=account_positions,
             )
 
         date_text = market_rows[0].get("trade_date").isoformat() if market_rows and hasattr(market_rows[0].get("trade_date"), "isoformat") else ""

@@ -13,6 +13,22 @@ export function fmtDateTime(value?: string | null): string {
   }).format(date);
 }
 
+export function fmtTimeHm(value?: string | null): string {
+  if (!value) return '-';
+  const raw = String(value);
+  const match = raw.match(/T(\d{2}):(\d{2})/);
+  if (match) {
+    return `${match[1]}:${match[2]}`;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
 export function fmtNumber(value: number): string {
   return new Intl.NumberFormat('ko-KR').format(Number(value || 0));
 }

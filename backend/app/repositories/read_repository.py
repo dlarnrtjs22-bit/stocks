@@ -617,6 +617,7 @@ class ReadRepository:
           sr.filtered_count,
           tp.tracked_id,
           tp.run_date as signal_date,
+          js.signal_time as entry_time,
           tp.featured_rank,
           tp.signal_rank,
           tp.grade,
@@ -637,6 +638,9 @@ class ReadRepository:
           end as eval_09_venue
         from selected_runs sr
         join jongga_tracked_picks tp on tp.run_id = sr.run_id
+        left join jongga_signals js
+          on js.run_id = tp.run_id
+         and js.stock_code = tp.stock_code
         left join lateral (
           select min(candidate_date) as eval_date
           from (

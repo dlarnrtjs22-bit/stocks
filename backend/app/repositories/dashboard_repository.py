@@ -158,6 +158,39 @@ class DashboardRepository:
                 cur.execute(sql)
                 return cur.fetchone()
 
+    def fetch_account_positions(self, account_no: str | None = None) -> list[dict[str, Any]]:
+        sql = """
+        with target_account as (
+          select coalesce(
+            nullif(%(account_no)s, ''),
+            (
+              select account_no
+              from kiwoom_account_snapshot_latest
+              order by updated_at desc
+              limit 1
+            )
+          ) as account_no
+        )
+        select
+          p.account_no,
+          p.ticker,
+          p.stock_name,
+          p.quantity,
+          p.available_qty,
+          p.avg_price,
+          p.current_price,
+          p.eval_amount,
+          p.profit_amount,
+          p.profit_rate
+        from kiwoom_account_positions_latest p
+        join target_account t on t.account_no = p.account_no
+        order by p.eval_amount desc, p.ticker asc
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {'account_no': str(account_no or '').strip()})
+                return list(cur.fetchall())
+
     def save_account_snapshot(self, payload: dict[str, Any]) -> None:
         sql = """
         insert into kiwoom_account_snapshot_latest (
