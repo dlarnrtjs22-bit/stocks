@@ -1,5 +1,5 @@
 import React from 'react';
-import { fmtCompactSigned, fmtDateTime, fmtNumber, fmtSigned, fmtSignedPercent, fmtSignedWon, fmtWon } from '../../app/formatters';
+import { fmtCompactSigned, fmtDateTime, fmtNumber, fmtSigned, fmtSignedPercent, fmtWon } from '../../app/formatters';
 import type { DashboardResponse } from '../../types/api';
 
 interface DashboardViewProps {
@@ -15,7 +15,6 @@ export function DashboardView({
   loading,
   data,
   onRefresh,
-  onRefreshAccount,
   dashboardRefreshing,
   accountRefreshing,
 }: DashboardViewProps) {
@@ -32,9 +31,6 @@ export function DashboardView({
         <div className="toolbar-left">
           <button className="ghost-button" onClick={onRefresh} disabled={dashboardRefreshing || accountRefreshing}>
             {dashboardRefreshing ? '대시보드 새로고침 중...' : '대시보드 새로고침'}
-          </button>
-          <button className="ghost-button" onClick={onRefreshAccount} disabled={dashboardRefreshing || accountRefreshing}>
-            {accountRefreshing ? '계좌 동기화 중...' : '계좌 새로고침'}
           </button>
         </div>
       </div>
@@ -58,81 +54,10 @@ export function DashboardView({
         </div>
       </div>
 
-      <div className="dashboard-account card-panel">
-        <div className="section-head-row">
-          <div>
-            <div className="section-title">계좌 연동</div>
-            <div className="muted-text">계좌번호 {data.account.account_no || '-'}</div>
-          </div>
-        </div>
-        {data.account.available ? (
-          <>
-            <div className="metric-box-row four">
-              <div className="metric-box">
-                <div className="metric-label">평가금액</div>
-                <div className="metric-value">{fmtWon(data.account.total_eval_amt)}</div>
-              </div>
-              <div className="metric-box">
-                <div className="metric-label">평가손익</div>
-                <div className="metric-value">{fmtSignedWon(data.account.total_eval_profit)}</div>
-              </div>
-              <div className="metric-box">
-                <div className="metric-label">실현손익</div>
-                <div className="metric-value">{fmtSignedWon(data.account.realized_profit)}</div>
-              </div>
-              <div className="metric-box">
-                <div className="metric-label">미체결</div>
-                <div className="metric-value">{fmtNumber(data.account.unfilled_count)}</div>
-              </div>
-            </div>
-            <div className="inline-status">
-              {data.account.note || '계좌 응답이 연결되었습니다.'} 보유종목 {fmtNumber(data.account.holdings_count)}건 / 추정자산 {fmtWon(data.account.estimated_assets)}
-            </div>
-            {data.account.positions.length ? (
-              <div className="table-panel">
-                <div className="section-title">보유 종목</div>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>종목명</th>
-                      <th>티커</th>
-                      <th>보유수량</th>
-                      <th>주문가능</th>
-                      <th>평단가</th>
-                      <th>현재가</th>
-                      <th>수익률</th>
-                      <th>평가손익</th>
-                      <th>평가금액</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.account.positions.map((position) => (
-                      <tr key={`${position.ticker}-${position.stock_name}`}>
-                        <td>{position.stock_name}</td>
-                        <td>{position.ticker}</td>
-                        <td>{fmtNumber(position.quantity)}</td>
-                        <td>{fmtNumber(position.available_qty)}</td>
-                        <td>{fmtWon(position.avg_price)}</td>
-                        <td>{fmtWon(position.current_price)}</td>
-                        <td>{fmtSignedPercent(position.profit_rate)}</td>
-                        <td>{fmtSignedWon(position.profit_amount)}</td>
-                        <td>{fmtWon(position.eval_amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="muted-text">{data.account.note}</div>
-        )}
-      </div>
-
       <div>
         <div className="section-title">추천 후보 최대 5종목</div>
         {data.picks.length < 5 ? (
-          <div className="muted-text">가격과 조건을 적용해 {data.picks.length}종목만 남겼습니다.</div>
+          <div className="muted-text">가격과 조건을 충족한 {data.picks.length}종목만 추렸습니다.</div>
         ) : null}
         <div className="dashboard-pick-grid">
           {data.picks.map((pick) => (
@@ -184,7 +109,7 @@ export function DashboardView({
                   <div className="metric-value small">{fmtCompactSigned(pick.inst_5d)}</div>
                 </div>
                 <div className="metric-box">
-                  <div className="metric-label">수집처</div>
+                  <div className="metric-label">호출 거래소</div>
                   <div className="metric-value small">{pick.venue || '-'}</div>
                 </div>
               </div>
@@ -221,7 +146,7 @@ export function DashboardView({
         </div>
       </div>
 
-      <div className="muted-text">업데이트: {fmtDateTime(data.account.snapshot_time || data.markets[0]?.snapshot_time || null)}</div>
+      <div className="muted-text">업데이트: {fmtDateTime(data.markets[0]?.snapshot_time || null)}</div>
     </section>
   );
 }

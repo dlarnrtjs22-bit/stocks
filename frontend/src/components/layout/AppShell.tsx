@@ -11,6 +11,7 @@ interface AppShellProps {
 
 const menuItems: Array<{ key: ViewKey; title: string; desc: string }> = [
   { key: 'dashboard', title: 'Dashboard', desc: '시장 요약과 추천' },
+  { key: 'trade_history', title: '매매내역', desc: '계좌와 체결내역' },
   { key: 'closing', title: '종가배팅', desc: 'Closing Bet V2' },
   { key: 'performance', title: '누적 성과', desc: 'Performance' },
   { key: 'data_status', title: 'Data Status', desc: '배치 상태와 로그' },

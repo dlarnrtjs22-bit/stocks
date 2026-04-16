@@ -1,6 +1,6 @@
 ﻿// 이 파일은 화면별 API 호출 함수를 한 곳에 모은다.
 import { fetchJson } from './client';
-import type { BatchListResponse, BatchLogResponse, ClosingBetResponse, DashboardResponse, DateListResponse, PerformanceRefreshResponse, PerformanceResponse, PreviewResponse } from '../types/api';
+import type { BatchListResponse, BatchLogResponse, ClosingBetResponse, DashboardResponse, DateListResponse, PerformanceRefreshResponse, PerformanceResponse, PreviewResponse, TradeHistoryResponse } from '../types/api';
 
 export function getDates() {
   return fetchJson<DateListResponse>('/api/closing-bet/dates');
@@ -59,4 +59,8 @@ export function getDashboard(refreshAccount = false, forceRefresh = false) {
   }
   const query = params.toString();
   return fetchJson<DashboardResponse>(`/api/dashboard${query ? `?${query}` : ''}`);
+}
+
+export function getTradeHistory(params: URLSearchParams) {
+  return fetchJson<TradeHistoryResponse>(`/api/trade-history?${params.toString()}`);
 }

@@ -15,6 +15,7 @@ from backend.app.api.routes.closing_bet import router as closing_bet_router
 from backend.app.api.routes.dashboard import router as dashboard_router
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.performance import router as performance_router
+from backend.app.api.routes.trade_history import router as trade_history_router
 from backend.app.core.config import settings
 from backend.app.core.database import close_db_pool, open_db_pool
 from backend.app.core.logging import configure_logging
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(dashboard_router)
+    app.include_router(trade_history_router)
     app.include_router(closing_bet_router)
     app.include_router(performance_router)
     app.include_router(batches_router)

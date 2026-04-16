@@ -229,6 +229,62 @@ class DashboardRepository:
         account = str(account_no or '').strip()
         if not account:
             return 0
+        merged: dict[str, dict[str, Any]] = {}
+        for position in positions:
+            ticker = str(position.get('ticker', '') or '').strip().upper()
+            if not ticker:
+                continue
+            quantity = int(position.get('quantity', 0) or 0)
+            available_qty = int(position.get('available_qty', 0) or 0)
+            avg_price = float(position.get('avg_price', 0) or 0)
+            current_price = float(position.get('current_price', 0) or 0)
+            eval_amount = int(position.get('eval_amount', 0) or 0)
+            profit_amount = int(position.get('profit_amount', 0) or 0)
+            profit_rate = float(position.get('profit_rate', 0) or 0)
+            stock_name = str(position.get('stock_name', '') or '')
+            if ticker not in merged:
+                merged[ticker] = {
+                    'ticker': ticker,
+                    'stock_name': stock_name,
+                    'quantity': quantity,
+                    'available_qty': available_qty,
+                    'avg_price': avg_price,
+                    'current_price': current_price,
+                    'eval_amount': eval_amount,
+                    'profit_amount': profit_amount,
+                    'profit_rate': profit_rate,
+                    '_purchase_amount': avg_price * quantity,
+                }
+                continue
+            current = merged[ticker]
+            current['quantity'] += quantity
+            current['available_qty'] += available_qty
+            current['eval_amount'] += eval_amount
+            current['profit_amount'] += profit_amount
+            current['_purchase_amount'] += avg_price * quantity
+            current['current_price'] = current_price or current['current_price']
+            if not current['stock_name'] and stock_name:
+                current['stock_name'] = stock_name
+        normalized_positions: list[dict[str, Any]] = []
+        for value in merged.values():
+            qty = int(value.get('quantity', 0) or 0)
+            purchase_amount = float(value.get('_purchase_amount', 0) or 0)
+            avg_price = purchase_amount / qty if qty > 0 else float(value.get('avg_price', 0) or 0)
+            profit_amount = int(value.get('profit_amount', 0) or 0)
+            profit_rate = round((profit_amount / purchase_amount) * 100.0, 2) if purchase_amount > 0 else float(value.get('profit_rate', 0) or 0)
+            normalized_positions.append(
+                {
+                    'ticker': value['ticker'],
+                    'stock_name': value['stock_name'],
+                    'quantity': qty,
+                    'available_qty': int(value.get('available_qty', 0) or 0),
+                    'avg_price': avg_price,
+                    'current_price': float(value.get('current_price', 0) or 0),
+                    'eval_amount': int(value.get('eval_amount', 0) or 0),
+                    'profit_amount': profit_amount,
+                    'profit_rate': profit_rate,
+                }
+            )
         delete_sql = "delete from kiwoom_account_positions_latest where account_no = %(account_no)s"
         insert_sql = """
         insert into kiwoom_account_positions_latest (
@@ -242,6 +298,133 @@ class DashboardRepository:
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(delete_sql, {'account_no': account})
-                for position in positions:
+                for position in normalized_positions:
                     cur.execute(insert_sql, {**position, 'account_no': account})
-        return len(positions)
+        return len(normalized_positions)
+
+    def upsert_order_execution_events(self, events: list[dict[str, Any]]) -> int:
+        rows: list[dict[str, Any]] = []
+        for event in events:
+            account_no = str(event.get('account_no', '') or '').strip()
+            order_no = str(event.get('order_no', '') or '').strip()
+            if not account_no or not order_no:
+                continue
+            rows.append(
+                {
+                    'account_no': account_no,
+                    'order_no': order_no,
+                    'ticker': str(event.get('ticker', '') or '').strip().upper(),
+                    'stock_name': str(event.get('stock_name', '') or ''),
+                    'order_type': str(event.get('order_type', '') or ''),
+                    'order_status': str(event.get('order_status', '') or ''),
+                    'order_qty': int(event.get('order_qty', 0) or 0),
+                    'filled_qty': int(event.get('filled_qty', 0) or 0),
+                    'unfilled_qty': int(event.get('unfilled_qty', 0) or 0),
+                    'order_price': float(event.get('order_price', 0) or 0),
+                    'filled_price': float(event.get('filled_price', 0) or 0),
+                    'order_time': event.get('order_time'),
+                    'filled_time': event.get('filled_time'),
+                    'fill_latency_ms': float(event.get('fill_latency_ms', 0) or 0),
+                    'slippage_bps': float(event.get('slippage_bps', 0) or 0),
+                    'venue': str(event.get('venue', '') or ''),
+                    'raw_payload': json.dumps(event.get('raw_payload', {}) if isinstance(event.get('raw_payload'), dict) else {}, ensure_ascii=False),
+                }
+            )
+        if not rows:
+            return 0
+
+        sql = """
+        insert into kiwoom_order_execution_events (
+          account_no, order_no, ticker, stock_name, order_type, order_status,
+          order_qty, filled_qty, unfilled_qty, order_price, filled_price, order_time,
+          filled_time, fill_latency_ms, slippage_bps, venue, raw_payload
+        ) values (
+          %(account_no)s, %(order_no)s, %(ticker)s, %(stock_name)s, %(order_type)s, %(order_status)s,
+          %(order_qty)s, %(filled_qty)s, %(unfilled_qty)s, %(order_price)s, %(filled_price)s, %(order_time)s,
+          %(filled_time)s, %(fill_latency_ms)s, %(slippage_bps)s, %(venue)s, %(raw_payload)s::jsonb
+        )
+        on conflict (account_no, order_no) do update
+        set ticker = excluded.ticker,
+            stock_name = excluded.stock_name,
+            order_type = excluded.order_type,
+            order_status = excluded.order_status,
+            order_qty = excluded.order_qty,
+            filled_qty = excluded.filled_qty,
+            unfilled_qty = excluded.unfilled_qty,
+            order_price = excluded.order_price,
+            filled_price = excluded.filled_price,
+            order_time = excluded.order_time,
+            filled_time = excluded.filled_time,
+            fill_latency_ms = excluded.fill_latency_ms,
+            slippage_bps = excluded.slippage_bps,
+            venue = excluded.venue,
+            raw_payload = excluded.raw_payload,
+            updated_at = now()
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                for row in rows:
+                    cur.execute(sql, row)
+        return len(rows)
+
+    def fetch_order_execution_events(
+        self,
+        *,
+        account_no: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+        with target_account as (
+          select coalesce(
+            nullif(%(account_no)s, ''),
+            (
+              select account_no
+              from kiwoom_account_snapshot_latest
+              order by updated_at desc
+              limit 1
+            )
+          ) as account_no
+        )
+        select
+          e.account_no,
+          e.order_no,
+          e.ticker,
+          e.stock_name,
+          e.order_type,
+          e.order_status,
+          e.order_qty,
+          e.filled_qty,
+          e.unfilled_qty,
+          e.order_price,
+          e.filled_price,
+          e.order_time,
+          e.filled_time,
+          e.fill_latency_ms,
+          e.slippage_bps,
+          e.venue,
+          e.raw_payload,
+          e.updated_at
+        from kiwoom_order_execution_events e
+        join target_account t on t.account_no = e.account_no
+        where (
+          %(date_from)s::date is null
+          or coalesce(e.filled_time::date, e.order_time::date, e.updated_at::date) >= %(date_from)s::date
+        )
+          and (
+            %(date_to)s::date is null
+            or coalesce(e.filled_time::date, e.order_time::date, e.updated_at::date) <= %(date_to)s::date
+          )
+        order by coalesce(e.filled_time, e.order_time, e.updated_at) desc, e.order_no desc
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    {
+                        'account_no': str(account_no or '').strip(),
+                        'date_from': date_from,
+                        'date_to': date_to,
+                    },
+                )
+                return list(cur.fetchall())

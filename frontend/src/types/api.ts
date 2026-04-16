@@ -1,5 +1,5 @@
 ﻿// 이 파일은 프론트에서 공통으로 사용하는 API 타입을 정의한다.
-export type ViewKey = 'dashboard' | 'data_status' | 'closing' | 'performance';
+export type ViewKey = 'dashboard' | 'trade_history' | 'data_status' | 'closing' | 'performance';
 
 export interface BasisSourceItem {
   label: string;
@@ -320,4 +320,49 @@ export interface DashboardResponse {
   markets: DashboardMarketItem[];
   picks: DashboardPickPayload[];
   account: DashboardAccountPayload;
+}
+
+export interface TradeHistoryDailyItem {
+  date: string;
+  buy_amount: number;
+  sell_amount: number;
+  realized_profit: number;
+  commission: number;
+  tax: number;
+}
+
+export interface TradeHistoryExecutionItem {
+  key: string;
+  order_no: string;
+  original_order_no?: string | null;
+  ticker: string;
+  stock_name: string;
+  side: string;
+  order_type: string;
+  order_status: string;
+  trade_type: string;
+  venue: string;
+  order_qty: number;
+  filled_qty: number;
+  unfilled_qty: number;
+  order_price: number;
+  filled_price: number;
+  order_time?: string | null;
+  filled_time?: string | null;
+  fee: number;
+  tax: number;
+  stop_price: number;
+  sor_yn: string;
+  fill_latency_ms: number;
+  slippage_bps: number;
+}
+
+export interface TradeHistoryResponse {
+  date_from: string;
+  date_to: string;
+  account: DashboardAccountPayload;
+  daily_summary: TradeHistoryDailyItem[];
+  executions: TradeHistoryExecutionItem[];
+  filters: Record<string, string>;
+  refreshed_at?: string | null;
 }
