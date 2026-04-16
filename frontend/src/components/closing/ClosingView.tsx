@@ -25,7 +25,7 @@ interface ClosingViewProps {
   onPageChange: (page: number) => void;
 }
 
-function ClosingCard({ item, featured = false }: { item: ClosingBetItem; featured?: boolean }) {
+function ClosingCard({ item, featured = false, displayRank }: { item: ClosingBetItem; featured?: boolean; displayRank: number }) {
   return (
     <article className={`closing-card grade-${item.grade.toLowerCase()} ${featured ? 'featured-card' : ''}`}>
       <div className="closing-top-row">
@@ -33,7 +33,7 @@ function ClosingCard({ item, featured = false }: { item: ClosingBetItem; feature
           <span className="tag">{item.grade} 등급</span>
           {item.base_grade && item.base_grade !== item.grade ? <span className="tag">원등급 {item.base_grade}</span> : null}
           <span className="tag">{item.market}</span>
-          <span className="tag">#{item.global_rank}</span>
+          <span className="tag">#{displayRank}</span>
         </div>
         <div className="score-box">
           <strong>{item.score_total}</strong>
@@ -118,6 +118,7 @@ function ClosingCard({ item, featured = false }: { item: ClosingBetItem; feature
           <div className="context-box">
             <div>시황: {String(item.market_context.market_label || item.market || '-')} / {item.market_status_label || String(item.market_context.market_status || '-')}</div>
             <div>프로그램: {fmtWonToEok(Number(item.program_context.total_net || 0))}</div>
+            <div>개별 프로그램: 순매수 {fmtWonToEok(Number(item.stock_program_context.latest_net_buy_amt || 0))} / 10분 {fmtWonToEok(Number(item.stock_program_context.delta_10m_amt || 0))} / 30분 {fmtWonToEok(Number(item.stock_program_context.delta_30m_amt || 0))}</div>
             <div>글로벌: {item.external_market_status_label || String(item.external_market_context.status || '-')} / 위험점수 {Number(item.external_market_context.risk_score || 0).toFixed(1)}</div>
             <div>분봉 패턴: {item.minute_pattern_label || '-'}</div>
           </div>
@@ -135,22 +136,24 @@ export function ClosingView({ loading, data, onPageChange }: ClosingViewProps) {
     return <div className="card-panel">데이터 없음</div>;
   }
 
+  const pageOffset = Math.max(0, (data.pagination.page - 1) * data.pagination.page_size);
+
   return (
     <section>
       <div className="section-stack">
         <div>
           <div className="section-title">핵심 후보 5종목</div>
           <div className="featured-list">
-            {data.featured_items.map((item) => (
-              <ClosingCard key={`featured-${item.ticker}-${item.rank}`} item={item} featured />
+            {data.featured_items.map((item, index) => (
+              <ClosingCard key={`featured-${item.ticker}-${item.rank}`} item={item} featured displayRank={index + 1} />
             ))}
           </div>
         </div>
         <div>
           <div className="section-title">종가배팅 전체 후보</div>
           <div className="section-stack">
-            {data.items.map((item) => (
-              <ClosingCard key={`${item.ticker}-${item.rank}`} item={item} />
+            {data.items.map((item, index) => (
+              <ClosingCard key={`${item.ticker}-${item.rank}`} item={item} displayRank={pageOffset + index + 1} />
             ))}
           </div>
         </div>

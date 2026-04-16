@@ -79,7 +79,7 @@ class SignalConfig:
         ),
         Grade.A: GradeConfig(
             min_trading_value=500_000_000_000,    # 5천억
-            min_change_pct=6.0,
+            min_change_pct=5.0,
             max_change_pct=15.0,
             min_score=10,
             r_multiplier=1.0,

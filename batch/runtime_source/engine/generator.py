@@ -233,6 +233,7 @@ class SignalGenerator:
                 "consolidation": sig.score.consolidation,
                 "market": sig.score.market,
                 "program": sig.score.program,
+                "stock_program": sig.score.stock_program,
                 "sector": sig.score.sector,
                 "leader": sig.score.leader,
                 "intraday": sig.score.intraday,
@@ -259,6 +260,7 @@ class SignalGenerator:
             intraday_context = sig.ai_overall.get("intraday_context", {}) if isinstance(sig.ai_overall, dict) else {}
             sector_context = sig.ai_overall.get("sector_leadership", {}) if isinstance(sig.ai_overall, dict) else {}
             intraday_pressure = sig.ai_overall.get("intraday_pressure", {}) if isinstance(sig.ai_overall, dict) else {}
+            stock_program_context = sig.ai_overall.get("stock_program_context", {}) if isinstance(sig.ai_overall, dict) else {}
             news_attention = sig.ai_overall.get("news_attention", {}) if isinstance(sig.ai_overall, dict) else {}
             news_items = sig.news_items[:3] if isinstance(sig.news_items, list) else []
             if isinstance(market_context, dict) and market_context:
@@ -273,6 +275,8 @@ class SignalGenerator:
                 metrics["sector_leadership"] = sector_context
             if isinstance(intraday_pressure, dict) and intraday_pressure:
                 metrics["intraday_pressure"] = intraday_pressure
+            if isinstance(stock_program_context, dict) and stock_program_context:
+                metrics["stock_program_context"] = stock_program_context
             if isinstance(news_attention, dict) and news_attention:
                 metrics["news_attention"] = news_attention
             metrics["fresh_news_count"] = len(news_items)
@@ -301,6 +305,8 @@ class SignalGenerator:
                     fallback["sector_leadership"] = sector_context
                 if isinstance(intraday_pressure, dict):
                     fallback["intraday_pressure"] = intraday_pressure
+                if isinstance(stock_program_context, dict):
+                    fallback["stock_program_context"] = stock_program_context
                 if isinstance(news_attention, dict):
                     fallback["news_attention"] = news_attention
                 fallback.setdefault("market_policy", metrics.get("market_policy", {}))
@@ -324,6 +330,7 @@ class SignalGenerator:
                 overall.setdefault("intraday_context", intraday_context if isinstance(intraday_context, dict) else {})
                 overall.setdefault("sector_leadership", sector_context if isinstance(sector_context, dict) else {})
                 overall.setdefault("intraday_pressure", intraday_pressure if isinstance(intraday_pressure, dict) else {})
+                overall.setdefault("stock_program_context", stock_program_context if isinstance(stock_program_context, dict) else {})
                 overall.setdefault("news_attention", news_attention if isinstance(news_attention, dict) else {})
                 overall.setdefault("market_policy", metrics.get("market_policy", {}))
                 overall.setdefault("base_grade", metrics.get("base_grade", _grade_value(sig.grade)))
@@ -414,6 +421,7 @@ class SignalGenerator:
             market_context = await self._collector.get_market_context(stock.market)
             program_trade = await self._collector.get_program_trade(stock.market)
             intraday_feature = await self._collector.get_intraday_feature(stock.code)
+            stock_program = await self._collector.get_stock_program_data(stock.code)
 
             if intraday_feature.current_price > 0:
                 stock.close = intraday_feature.current_price
@@ -461,6 +469,7 @@ class SignalGenerator:
                 supply,
                 market_context,
                 program_trade,
+                stock_program,
                 sector_leadership,
                 intraday_pressure,
                 news_attention,
@@ -502,6 +511,7 @@ class SignalGenerator:
                 ai_overall={
                     "market_context": market_context.to_dict(),
                     "program_context": program_trade.to_dict(),
+                    "stock_program_context": stock_program.to_dict(),
                     "intraday_context": intraday_feature.to_dict(),
                     "external_market_context": dict(self.external_market_context),
                     "sector_leadership": sector_leadership.to_dict() if sector_leadership is not None else {},

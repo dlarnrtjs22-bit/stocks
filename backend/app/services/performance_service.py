@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from batch.runtime_source.providers.kiwoom_client import KiwoomAPIError, KiwoomRESTClient, venue_stock_code
@@ -15,10 +15,11 @@ from backend.app.schemas.performance import (
     PerformanceTradeItem,
 )
 from backend.app.services.closing_bet_service import ClosingBetService
-from backend.app.services.view_helpers import infer_themes, normalize_date_arg, safe_float, safe_int
+from backend.app.services.view_helpers import infer_themes, safe_float, safe_int
 
 
 SEOUL_TZ = ZoneInfo('Asia/Seoul')
+TRACKED_PICK_LIMIT = 5
 
 
 def _parse_kiwoom_quote_time(eval_date: date, raw_value: str) -> datetime | None:
@@ -47,18 +48,27 @@ def _parse_kiwoom_quote_time(eval_date: date, raw_value: str) -> datetime | None
         return None
 
 
+def _resolve_date_range(date_from_arg: str | None, date_to_arg: str | None) -> tuple[date, date, str]:
+    today = datetime.now(SEOUL_TZ).date()
+    date_from = date.fromisoformat(str(date_from_arg).strip()) if date_from_arg else today - timedelta(days=6)
+    date_to = date.fromisoformat(str(date_to_arg).strip()) if date_to_arg else today
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    return date_from, date_to, f'{date_from.isoformat()}~{date_to.isoformat()}'
+
+
 class PerformanceService:
     def __init__(self, repository: ReadRepository | None = None) -> None:
         self.repository = repository or ReadRepository()
         self.closing_service = ClosingBetService(self.repository)
 
-    def _top_two_featured_picks(self, date_arg: str | None) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
+    def _top_featured_picks(self, date_arg: str | None) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
         run_meta = self.repository.fetch_run_meta(date_arg)
         if not run_meta:
             return None, []
         closing = self.closing_service.get_closing_bet(date_arg, 'ALL', '', 1, 8)
         featured = [item.model_dump() for item in closing.featured_items]
-        return run_meta, featured[:2]
+        return run_meta, featured[:TRACKED_PICK_LIMIT]
 
     def _fetch_slot_quote(
         self,
@@ -90,13 +100,19 @@ class PerformanceService:
             return price, quote_time
         return None
 
-    def quick_refresh(self, date_arg: str | None) -> PerformanceRefreshResponse:
-        run_meta, picks = self._top_two_featured_picks(date_arg)
-        if not run_meta:
+    def quick_refresh(self, date_from_arg: str | None, date_to_arg: str | None) -> PerformanceRefreshResponse:
+        date_from, date_to, _ = _resolve_date_range(date_from_arg, date_to_arg)
+        run_dates = self.repository.list_run_dates_between(date_from, date_to)
+        if not run_dates:
             return PerformanceRefreshResponse(status='no_run', message='선택한 날짜의 run 이 없습니다.')
 
-        tracked_count = self.repository.replace_tracked_picks(run_meta, picks)
-        tracked_rows = self.repository.fetch_tracked_pick_rows(date_arg)
+        tracked_count = 0
+        for run_day in run_dates:
+            run_meta, picks = self._top_featured_picks(run_day.isoformat())
+            if not run_meta:
+                continue
+            tracked_count += self.repository.replace_tracked_picks(run_meta, picks)
+        tracked_rows = self.repository.fetch_tracked_pick_rows_between(date_from, date_to)
         if not tracked_rows:
             return PerformanceRefreshResponse(status='no_picks', tracked_count=tracked_count, message='저장된 추적 종목이 없습니다.')
 
@@ -183,12 +199,12 @@ class PerformanceService:
             refreshed_09=refreshed_09,
             skipped_08=skipped_08,
             skipped_09=skipped_09,
-            message='추적 상위 2종목 비교값을 갱신했습니다.',
+            message='추적 상위 5종목 비교값을 갱신했습니다.',
         )
 
-    def get_performance(self, date_arg: str | None, grade_filter: str, outcome_filter: str, query: str, page: int, page_size: int) -> PerformanceResponse:
-        request_date = normalize_date_arg(date_arg)
-        bundle = self.repository.fetch_performance_bundle(date_arg, grade_filter, outcome_filter, query, page, page_size)
+    def get_performance(self, date_from_arg: str | None, date_to_arg: str | None, grade_filter: str, outcome_filter: str, query: str, page: int, page_size: int) -> PerformanceResponse:
+        date_from, date_to, request_date = _resolve_date_range(date_from_arg, date_to_arg)
+        bundle = self.repository.fetch_performance_bundle(date_from, date_to, grade_filter, outcome_filter, query, page, page_size)
         run_meta = bundle['run_meta']
         basis = self.closing_service._build_basis(request_date, run_meta)
         selected_date = basis.selected_date
@@ -201,13 +217,14 @@ class PerformanceService:
             outcome = str(row.get('outcome_09', 'OPEN'))
             code = str(row.get('stock_code', '')).zfill(6)
             name = str(row.get('stock_name', ''))
+            buy_date = row.get('signal_date').isoformat() if row.get('signal_date') else selected_date
             roi_08 = round(safe_float(row.get('roi_08'), 0.0), 2) if row.get('roi_08') is not None else None
             roi_09 = round(safe_float(row.get('roi_09'), 0.0), 2) if row.get('roi_09') is not None else None
             trades.append(
                 PerformanceTradeItem(
-                    key=safe_int(row.get('signal_rank'), 0),
-                    date=selected_date,
-                    buy_date=selected_date,
+                    key=safe_int(row.get('tracked_id'), safe_int(row.get('signal_rank'), 0)),
+                    date=buy_date,
+                    buy_date=buy_date,
                     grade=grade,
                     name=name,
                     ticker=code,

@@ -968,6 +968,203 @@ class SupabaseRepository:
                 cur.executemany(sql, rows)
         return len(rows)
 
+    def upsert_kiwoom_stock_program_latest(self, df: pd.DataFrame) -> int:
+        if df is None or df.empty:
+            return 0
+        rows = []
+        required = [
+            "trade_date",
+            "ticker",
+            "stock_name",
+            "market",
+            "venue",
+            "latest_time",
+            "current_price",
+            "change_pct",
+            "program_sell_amt",
+            "program_buy_amt",
+            "program_net_buy_amt",
+            "program_sell_qty",
+            "program_buy_qty",
+            "program_net_buy_qty",
+            "delta_10m_amt",
+            "delta_30m_amt",
+            "delta_10m_qty",
+            "delta_30m_qty",
+        ]
+        frame = df.copy()
+        for c in required:
+            if c not in frame.columns:
+                frame[c] = None
+        for values in frame[required].itertuples(index=False, name=None):
+            (
+                trade_date_raw,
+                ticker_raw,
+                stock_name_raw,
+                market_raw,
+                venue_raw,
+                latest_time_raw,
+                current_price_raw,
+                change_pct_raw,
+                program_sell_amt_raw,
+                program_buy_amt_raw,
+                program_net_buy_amt_raw,
+                program_sell_qty_raw,
+                program_buy_qty_raw,
+                program_net_buy_qty_raw,
+                delta_10m_amt_raw,
+                delta_30m_amt_raw,
+                delta_10m_qty_raw,
+                delta_30m_qty_raw,
+            ) = values
+            trade_date = _to_date(trade_date_raw)
+            ticker = str(ticker_raw or "").strip().upper()
+            if trade_date is None or not ticker:
+                continue
+            rows.append(
+                (
+                    trade_date,
+                    ticker,
+                    str(stock_name_raw or ""),
+                    str(market_raw or ""),
+                    str(venue_raw or ""),
+                    _to_dt(latest_time_raw),
+                    _to_float_num(current_price_raw),
+                    _to_float_num(change_pct_raw),
+                    _to_int_num(program_sell_amt_raw),
+                    _to_int_num(program_buy_amt_raw),
+                    _to_int_num(program_net_buy_amt_raw),
+                    _to_int_num(program_sell_qty_raw),
+                    _to_int_num(program_buy_qty_raw),
+                    _to_int_num(program_net_buy_qty_raw),
+                    _to_int_num(delta_10m_amt_raw),
+                    _to_int_num(delta_30m_amt_raw),
+                    _to_int_num(delta_10m_qty_raw),
+                    _to_int_num(delta_30m_qty_raw),
+                )
+            )
+        if not rows:
+            return 0
+
+        sql = """
+        insert into kiwoom_stock_program_trades_latest (
+          trade_date, ticker, stock_name, market, venue, latest_time, current_price, change_pct,
+          program_sell_amt, program_buy_amt, program_net_buy_amt,
+          program_sell_qty, program_buy_qty, program_net_buy_qty,
+          delta_10m_amt, delta_30m_amt, delta_10m_qty, delta_30m_qty
+        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        on conflict (trade_date, ticker) do update
+        set stock_name=excluded.stock_name,
+            market=excluded.market,
+            venue=excluded.venue,
+            latest_time=excluded.latest_time,
+            current_price=excluded.current_price,
+            change_pct=excluded.change_pct,
+            program_sell_amt=excluded.program_sell_amt,
+            program_buy_amt=excluded.program_buy_amt,
+            program_net_buy_amt=excluded.program_net_buy_amt,
+            program_sell_qty=excluded.program_sell_qty,
+            program_buy_qty=excluded.program_buy_qty,
+            program_net_buy_qty=excluded.program_net_buy_qty,
+            delta_10m_amt=excluded.delta_10m_amt,
+            delta_30m_amt=excluded.delta_30m_amt,
+            delta_10m_qty=excluded.delta_10m_qty,
+            delta_30m_qty=excluded.delta_30m_qty,
+            updated_at=now()
+        """
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(sql, rows)
+        return len(rows)
+
+    def upsert_kiwoom_stock_program_daily(self, df: pd.DataFrame) -> int:
+        if df is None or df.empty:
+            return 0
+        rows = []
+        required = [
+            "trade_date",
+            "ticker",
+            "stock_name",
+            "venue",
+            "current_price",
+            "change_pct",
+            "trade_volume",
+            "program_sell_amt",
+            "program_buy_amt",
+            "program_net_buy_amt",
+            "program_sell_qty",
+            "program_buy_qty",
+            "program_net_buy_qty",
+        ]
+        frame = df.copy()
+        for c in required:
+            if c not in frame.columns:
+                frame[c] = None
+        for values in frame[required].itertuples(index=False, name=None):
+            (
+                trade_date_raw,
+                ticker_raw,
+                stock_name_raw,
+                venue_raw,
+                current_price_raw,
+                change_pct_raw,
+                trade_volume_raw,
+                program_sell_amt_raw,
+                program_buy_amt_raw,
+                program_net_buy_amt_raw,
+                program_sell_qty_raw,
+                program_buy_qty_raw,
+                program_net_buy_qty_raw,
+            ) = values
+            trade_date = _to_date(trade_date_raw)
+            ticker = str(ticker_raw or "").strip().upper()
+            if trade_date is None or not ticker:
+                continue
+            rows.append(
+                (
+                    trade_date,
+                    ticker,
+                    str(stock_name_raw or ""),
+                    str(venue_raw or ""),
+                    _to_float_num(current_price_raw),
+                    _to_float_num(change_pct_raw),
+                    _to_int_num(trade_volume_raw),
+                    _to_int_num(program_sell_amt_raw),
+                    _to_int_num(program_buy_amt_raw),
+                    _to_int_num(program_net_buy_amt_raw),
+                    _to_int_num(program_sell_qty_raw),
+                    _to_int_num(program_buy_qty_raw),
+                    _to_int_num(program_net_buy_qty_raw),
+                )
+            )
+        if not rows:
+            return 0
+
+        sql = """
+        insert into kiwoom_stock_program_daily (
+          trade_date, ticker, stock_name, venue, current_price, change_pct, trade_volume,
+          program_sell_amt, program_buy_amt, program_net_buy_amt,
+          program_sell_qty, program_buy_qty, program_net_buy_qty
+        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        on conflict (trade_date, ticker) do update
+        set stock_name=excluded.stock_name,
+            venue=excluded.venue,
+            current_price=excluded.current_price,
+            change_pct=excluded.change_pct,
+            trade_volume=excluded.trade_volume,
+            program_sell_amt=excluded.program_sell_amt,
+            program_buy_amt=excluded.program_buy_amt,
+            program_net_buy_amt=excluded.program_net_buy_amt,
+            program_sell_qty=excluded.program_sell_qty,
+            program_buy_qty=excluded.program_buy_qty,
+            program_net_buy_qty=excluded.program_net_buy_qty,
+            updated_at=now()
+        """
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(sql, rows)
+        return len(rows)
+
     def upsert_kiwoom_account_snapshot(self, payload: Dict[str, Any]) -> int:
         account_no = str(payload.get("account_no", "")).strip()
         if not account_no:
@@ -1301,6 +1498,39 @@ class SupabaseRepository:
             from kiwoom_intraday_feature_snapshots
             where trade_date = (select d from latest_date)
             order by snapshot_time, market, ticker
+            """
+        )
+        return self._rows_to_df(rows)
+
+    def load_kiwoom_stock_program_latest_df(self) -> pd.DataFrame:
+        rows = self._fetch_rows(
+            """
+            with latest_date as (
+              select max(trade_date) as d from kiwoom_stock_program_trades_latest
+            )
+            select trade_date, ticker, stock_name, market, venue, latest_time, current_price, change_pct,
+                   program_sell_amt, program_buy_amt, program_net_buy_amt,
+                   program_sell_qty, program_buy_qty, program_net_buy_qty,
+                   delta_10m_amt, delta_30m_amt, delta_10m_qty, delta_30m_qty
+            from kiwoom_stock_program_trades_latest
+            where trade_date = (select d from latest_date)
+            order by latest_time desc nulls last, ticker
+            """
+        )
+        return self._rows_to_df(rows)
+
+    def load_kiwoom_stock_program_daily_df(self, lookback_days: int = 10) -> pd.DataFrame:
+        rows = self._fetch_rows(
+            f"""
+            with latest_date as (
+              select max(trade_date) as d from kiwoom_stock_program_daily
+            )
+            select trade_date, ticker, stock_name, venue, current_price, change_pct, trade_volume,
+                   program_sell_amt, program_buy_amt, program_net_buy_amt,
+                   program_sell_qty, program_buy_qty, program_net_buy_qty
+            from kiwoom_stock_program_daily
+            where trade_date >= ((select d from latest_date) - interval '{int(lookback_days)} days')
+            order by trade_date, ticker
             """
         )
         return self._rows_to_df(rows)

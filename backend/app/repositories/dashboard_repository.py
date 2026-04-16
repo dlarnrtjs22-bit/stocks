@@ -133,9 +133,8 @@ class DashboardRepository:
           on k.trade_date = (select d from latest_intraday)
          and k.ticker = v.stock_code
         order by
-          case v.base_grade when 'S' then 1 when 'A' then 2 when 'B' then 3 else 4 end,
-          case v.grade when 'S' then 1 when 'A' then 2 when 'B' then 3 else 4 end,
           v.score_total desc,
+          v.signal_rank asc,
           v.trading_value desc
         limit %(limit)s
         """

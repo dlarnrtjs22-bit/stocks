@@ -334,6 +334,7 @@ class LLMAnalyzer:
             "consolidation": _to_int(rule_scores.get("consolidation", 0)),
             "market": _to_int(rule_scores.get("market", 0)),
             "program": _to_int(rule_scores.get("program", 0)),
+            "stock_program": _to_int(rule_scores.get("stock_program", 0)),
             "sector": _to_int(rule_scores.get("sector", 0)),
             "leader": _to_int(rule_scores.get("leader", 0)),
             "intraday": _to_int(rule_scores.get("intraday", 0)),
@@ -361,6 +362,8 @@ class LLMAnalyzer:
             evidence.append("시장 시황이 우호적이라 종가배팅 추종 매매에 부담이 덜합니다.")
         if breakdown["program"] >= 1:
             evidence.append("프로그램 수급도 플러스여서 마감 수급에 보조 신호가 있습니다.")
+        if breakdown["stock_program"] >= 1:
+            evidence.append("개별 종목 프로그램 순매수가 붙어 종목 단위 마감 수급이 개선됐습니다.")
         if breakdown["sector"] >= 1:
             evidence.append("주도 섹터 흐름이 우호적이어서 시장 중심주의 조건에 가깝습니다.")
         if breakdown["leader"] >= 1:
@@ -380,7 +383,7 @@ class LLMAnalyzer:
             f"뉴스 {breakdown['news']}/3, 수급 {breakdown['supply']}/2, 거래량 {breakdown['volume']}/3, "
             f"차트 {breakdown['chart']}/2, 캔들 {breakdown['candle']}/1, 기간조정 {breakdown['consolidation']}/1, "
             f"시황 {breakdown['market']}/1, 프로그램 {breakdown['program']}/1, 섹터 {breakdown['sector']}/2, "
-            f"대장 {breakdown['leader']}/2, 장중압력 {breakdown['intraday']}/2, 화제성 {breakdown['news_attention']}/2"
+            f"개별프로그램 {breakdown['stock_program']}/2, 대장 {breakdown['leader']}/2, 장중압력 {breakdown['intraday']}/2, 화제성 {breakdown['news_attention']}/2"
         )
         reason_prefix = f"{reason.strip()} " if str(reason).strip() else ""
         decision_text = " ".join(str(x).strip() for x in decision.get("reasons", []) if str(x).strip())

@@ -8,11 +8,11 @@ from urllib.parse import quote
 import psycopg
 
 
-DEFAULT_SUPABASE_HOST = "localhost"
+DEFAULT_SUPABASE_HOST = "aws-1-ap-southeast-2.pooler.supabase.com"
 DEFAULT_SUPABASE_PORT = "5432"
-DEFAULT_SUPABASE_DB = "stocks"
-DEFAULT_SUPABASE_USER = "postgres"
-DEFAULT_SUPABASE_PASSWORD = ""
+DEFAULT_SUPABASE_DB = "postgres"
+DEFAULT_SUPABASE_USER = "postgres.oatjwoapytaqqyvhfirx"
+DEFAULT_SUPABASE_PASSWORD = "bnjrho12p!A"
 
 
 def storage_backend() -> str:

@@ -10,5 +10,8 @@ service = DashboardService()
 
 
 @router.get('', response_model=DashboardResponse)
-async def get_dashboard(refresh_account: bool = Query(False)) -> DashboardResponse:
-    return await service.get_dashboard(refresh_account=refresh_account)
+async def get_dashboard(
+    refresh_account: bool = Query(False),
+    force_refresh: bool = Query(False),
+) -> DashboardResponse:
+    return await service.get_dashboard(refresh_account=refresh_account, force_refresh=force_refresh)

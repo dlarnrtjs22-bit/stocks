@@ -19,6 +19,7 @@ from engine.models import (
     MarketContextData,
     NewsItem,
     ProgramTradeData,
+    StockProgramData,
     StockData,
     SupplyData,
 )
@@ -78,6 +79,8 @@ class KRXCollector:
         self.intraday_snapshots_df = self._read_csv("kiwoom_intraday_snapshots.csv")
         self.condition_hits_df = self._read_csv("kiwoom_condition_hits.csv")
         self.program_snapshots_df = self._read_csv("kiwoom_program_snapshots.csv")
+        self.stock_program_latest_df = self._read_csv("kiwoom_stock_program_latest.csv")
+        self.stock_program_daily_df = self._read_csv("kiwoom_stock_program_daily.csv")
 
         self._real_mode = (
             self.universe_df is not None
@@ -96,6 +99,8 @@ class KRXCollector:
         self._market_context_by_market: Dict[str, pd.Series] = {}
         self._program_by_market: Dict[str, pd.Series] = {}
         self._intraday_by_ticker: Dict[str, pd.Series] = {}
+        self._stock_program_by_ticker: Dict[str, pd.Series] = {}
+        self._stock_program_daily_by_ticker: Dict[str, pd.DataFrame] = {}
         self._prepare_indexes()
 
     async def __aenter__(self) -> "KRXCollector":
@@ -183,6 +188,32 @@ class KRXCollector:
             if "ticker_norm" in self.intraday_df.columns:
                 dedup = self.intraday_df.drop_duplicates(subset=["ticker_norm"], keep="last")
                 self._intraday_by_ticker = {str(row["ticker_norm"]): row for _, row in dedup.iterrows()}
+
+        if self.stock_program_latest_df is not None and not self.stock_program_latest_df.empty:
+            df = self.stock_program_latest_df.copy()
+            if "ticker" in df.columns:
+                df["ticker_norm"] = df["ticker"].map(_normalize_ticker)
+            if "latest_time" in df.columns:
+                df["latest_time_dt"] = pd.to_datetime(df["latest_time"], errors="coerce")
+                df = df.sort_values(["ticker_norm", "latest_time_dt"])
+            self.stock_program_latest_df = df.reset_index(drop=True)
+            if "ticker_norm" in self.stock_program_latest_df.columns:
+                dedup = self.stock_program_latest_df.drop_duplicates(subset=["ticker_norm"], keep="last")
+                self._stock_program_by_ticker = {str(row["ticker_norm"]): row for _, row in dedup.iterrows()}
+
+        if self.stock_program_daily_df is not None and not self.stock_program_daily_df.empty:
+            df = self.stock_program_daily_df.copy()
+            if "ticker" in df.columns:
+                df["ticker_norm"] = df["ticker"].map(_normalize_ticker)
+            if "trade_date" in df.columns:
+                df["trade_date_dt"] = pd.to_datetime(df["trade_date"], errors="coerce")
+                df = df.sort_values(["ticker_norm", "trade_date_dt"])
+            self.stock_program_daily_df = df.reset_index(drop=True)
+            if "ticker_norm" in self.stock_program_daily_df.columns:
+                self._stock_program_daily_by_ticker = {
+                    str(ticker): group.reset_index(drop=True)
+                    for ticker, group in self.stock_program_daily_df.groupby("ticker_norm", sort=False)
+                }
 
     async def get_top_gainers(self, market: str, top_n: int) -> List[StockData]:
         market_key = str(market or "").strip().upper()
@@ -377,6 +408,43 @@ class KRXCollector:
                 )
         return IntradayFeatureData(ticker=ticker)
 
+    async def get_stock_program_data(self, code: str) -> StockProgramData:
+        ticker = str(code or "").zfill(6)
+        latest = self._stock_program_by_ticker.get(ticker)
+        daily = self._stock_program_daily_by_ticker.get(ticker, pd.DataFrame())
+        if latest is None:
+            return StockProgramData(ticker=ticker)
+
+        latest_time = None
+        if str(latest.get("latest_time", "")).strip():
+            try:
+                latest_time = pd.to_datetime(latest["latest_time"]).to_pydatetime()
+            except Exception:
+                latest_time = None
+
+        daily_net_buy_amt_5d = 0
+        daily_net_buy_qty_5d = 0
+        if daily is not None and not daily.empty:
+            tail = daily.tail(5)
+            daily_net_buy_amt_5d = int(pd.to_numeric(tail.get("program_net_buy_amt"), errors="coerce").fillna(0).sum())
+            daily_net_buy_qty_5d = int(pd.to_numeric(tail.get("program_net_buy_qty"), errors="coerce").fillna(0).sum())
+
+        return StockProgramData(
+            ticker=ticker,
+            venue=str(latest.get("venue", "") or ""),
+            latest_time=latest_time,
+            current_price=float(latest.get("current_price", 0) or 0),
+            change_pct=float(latest.get("change_pct", 0) or 0),
+            latest_net_buy_amt=int(float(latest.get("program_net_buy_amt", 0) or 0)),
+            latest_net_buy_qty=int(float(latest.get("program_net_buy_qty", 0) or 0)),
+            delta_10m_amt=int(float(latest.get("delta_10m_amt", 0) or 0)),
+            delta_30m_amt=int(float(latest.get("delta_30m_amt", 0) or 0)),
+            delta_10m_qty=int(float(latest.get("delta_10m_qty", 0) or 0)),
+            delta_30m_qty=int(float(latest.get("delta_30m_qty", 0) or 0)),
+            daily_net_buy_amt_5d=daily_net_buy_amt_5d,
+            daily_net_buy_qty_5d=daily_net_buy_qty_5d,
+        )
+
     def _read_csv(self, name: str) -> Optional[pd.DataFrame]:
         if self.repo is None:
             return None
@@ -392,6 +460,8 @@ class KRXCollector:
                 "kiwoom_intraday_snapshots.csv": self.repo.load_kiwoom_intraday_snapshot_df,
                 "kiwoom_condition_hits.csv": self.repo.load_kiwoom_condition_hits_df,
                 "kiwoom_program_snapshots.csv": self.repo.load_kiwoom_program_snapshot_df,
+                "kiwoom_stock_program_latest.csv": self.repo.load_kiwoom_stock_program_latest_df,
+                "kiwoom_stock_program_daily.csv": self.repo.load_kiwoom_stock_program_daily_df,
             }.get(name)
             if loader is None:
                 return None

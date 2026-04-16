@@ -67,6 +67,7 @@ class ClosingBetItem(BaseModel):
     inst_5d: int = 0
     market_context: dict[str, Any] = Field(default_factory=dict)
     program_context: dict[str, Any] = Field(default_factory=dict)
+    stock_program_context: dict[str, Any] = Field(default_factory=dict)
     external_market_context: dict[str, Any] = Field(default_factory=dict)
     market_policy: dict[str, Any] = Field(default_factory=dict)
     minute_pattern_label: str = ''

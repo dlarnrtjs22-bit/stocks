@@ -29,9 +29,13 @@ export function PerformanceView({ loading, data, onPageChange, onQuickRefresh, q
     : data.comparison.better_slot === '09'
       ? '09시 정규장 우세'
       : '동률/평가대기';
+  const isRolling7d = data.basis?.request_date === 'latest(7d)';
 
   return (
     <section className="section-stack">
+      {isRolling7d ? (
+        <div className="inline-status">누적 성과 기본 조회는 금일 포함 최근 7거래일 기준입니다.</div>
+      ) : null}
       <div className="metric-box-row four">
         <div className="metric-box"><div className="metric-label">TOTAL SIGNALS</div><div className="metric-value">{data.summary.total_signals}</div></div>
         <div className="metric-box"><div className="metric-label">08시 NXT 승률</div><div className="metric-value">{data.summary_08.win_rate}%</div><div className="muted-text">W/L {data.summary_08.wins}/{data.summary_08.losses} / 평균 {fmtSignedPercent(data.summary_08.avg_roi)}</div></div>

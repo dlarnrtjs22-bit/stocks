@@ -95,6 +95,10 @@ def _normalize_run_date(date_arg: str | None) -> date | None:
 
 
 # 이 함수는 등급 필터를 허용된 값으로 정규화한다.
+def _performance_window_size(date_arg: str | None) -> int:
+    return 7 if not date_arg or str(date_arg).strip().lower() == 'latest' else 1
+
+
 def _normalize_grade_filter(grade_filter: str) -> str:
     target = str(grade_filter or 'ALL').strip().upper()
     return target if target in {'ALL', 'S', 'A', 'B', 'C'} else 'ALL'
@@ -150,6 +154,32 @@ class ReadRepository:
             with conn.cursor() as cur:
                 cur.execute(sql, {'run_date': run_date})
                 return cur.fetchone()
+
+    def fetch_run_meta_between(self, date_from: date, date_to: date) -> dict[str, Any] | None:
+        sql = """
+        select run_id, run_date, created_at, runtime_meta, total_candidates, filtered_count
+        from jongga_runs
+        where run_date between %(date_from)s::date and %(date_to)s::date
+        order by run_date desc, created_at desc
+        limit 1
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {'date_from': date_from, 'date_to': date_to})
+                return cur.fetchone()
+
+    def list_run_dates_between(self, date_from: date, date_to: date) -> list[date]:
+        sql = """
+        select distinct run_date
+        from jongga_runs
+        where run_date between %(date_from)s::date and %(date_to)s::date
+        order by run_date desc
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {'date_from': date_from, 'date_to': date_to})
+                rows = cur.fetchall()
+        return [row['run_date'] for row in rows if row.get('run_date')]
 
     def replace_tracked_picks(self, run_meta: dict[str, Any], picks: list[dict[str, Any]]) -> int:
         run_id = run_meta.get('run_id')
@@ -221,6 +251,31 @@ class ReadRepository:
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, {'run_date': run_date})
+                return list(cur.fetchall())
+
+    def fetch_tracked_pick_rows_between(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
+        sql = """
+        select
+          tp.tracked_id,
+          tp.run_id,
+          tp.run_date,
+          tp.featured_rank,
+          tp.signal_rank,
+          tp.stock_code,
+          tp.stock_name,
+          tp.market,
+          tp.grade,
+          tp.base_grade,
+          tp.entry_price,
+          tp.score_total,
+          tp.selected_at
+        from jongga_tracked_picks tp
+        where tp.run_date between %(date_from)s::date and %(date_to)s::date
+        order by tp.run_date desc, tp.featured_rank asc, tp.signal_rank asc
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {'date_from': date_from, 'date_to': date_to})
                 return list(cur.fetchall())
 
     def has_compare_price(self, tracked_id: int, eval_date: date, eval_slot: str) -> bool:
@@ -310,7 +365,7 @@ class ReadRepository:
         query: str,
         page: int,
         page_size: int,
-        featured_limit: int = 24,
+        featured_limit: int = 5,
     ) -> dict[str, Any]:
         run_date = _normalize_run_date(date_arg)
         normalized_grade = _normalize_grade_filter(grade_filter)
@@ -345,6 +400,7 @@ class ReadRepository:
             coalesce((js.score->>'consolidation')::int, 0) as score_consolidation,
             coalesce((js.score->>'market')::int, 0) as score_market,
             coalesce((js.score->>'program')::int, 0) as score_program,
+            coalesce((js.score->>'stock_program')::int, 0) as score_stock_program,
             coalesce((js.score->>'sector')::int, 0) as score_sector,
             coalesce((js.score->>'leader')::int, 0) as score_leader,
             coalesce((js.score->>'intraday')::int, 0) as score_intraday,
@@ -378,6 +434,7 @@ class ReadRepository:
             coalesce(js.ai_overall->'program_context', '{}'::jsonb) as program_context,
             coalesce(js.ai_overall->'sector_leadership', '{}'::jsonb) as sector_leadership,
             coalesce(js.ai_overall->'intraday_pressure', '{}'::jsonb) as intraday_pressure,
+            coalesce(js.ai_overall->'stock_program_context', '{}'::jsonb) as stock_program_context,
             coalesce(js.ai_overall->'news_attention', '{}'::jsonb) as news_attention,
             coalesce(js.ai_overall->'external_market_context', sr.runtime_meta->'external_market_context', '{}'::jsonb) as external_market_context,
             coalesce(js.ai_overall->'market_policy', js.ai_overall->'meta'->'decision'->'grade_policy', '{}'::jsonb) as market_policy
@@ -403,23 +460,30 @@ class ReadRepository:
             coalesce(sum(case when grade = 'C' then 1 else 0 end), 0)::int as grade_c
           from filtered
         ),
+        list_stats as (
+          select greatest(stats.total - %(featured_limit)s::int, 0)::int as list_total
+          from stats
+        ),
         paging as (
           select
             case
-              when stats.total = 0 then 1
+              when list_stats.list_total = 0 then 1
               else least(
                 greatest(%(page)s::int, 1),
-                greatest(ceil(stats.total::numeric / %(page_size)s::numeric)::int, 1)
+                greatest(ceil(list_stats.list_total::numeric / %(page_size)s::numeric)::int, 1)
               )
             end as safe_page,
             case
-              when stats.total = 0 then 0
-              else greatest(ceil(stats.total::numeric / %(page_size)s::numeric)::int, 1)
-            end as total_pages
-          from stats
+              when list_stats.list_total = 0 then 0
+              else greatest(ceil(list_stats.list_total::numeric / %(page_size)s::numeric)::int, 1)
+            end as total_pages,
+            list_stats.list_total
+          from list_stats
         ),
         numbered as (
-          select filtered.*, row_number() over (order by filtered.signal_rank asc) as rn
+          select filtered.*, row_number() over (
+            order by filtered.score_total desc, filtered.signal_rank asc, filtered.trading_value desc
+          ) as rn
           from filtered
         )
         select
@@ -435,19 +499,26 @@ class ReadRepository:
           stats.grade_a,
           stats.grade_b,
           stats.grade_c,
+          paging.list_total,
           paging.safe_page,
           paging.total_pages,
           coalesce((
-            select jsonb_agg(to_jsonb(n) - 'rn' order by n.signal_rank asc)
+            select jsonb_agg(
+              to_jsonb(n) - 'rn'
+              order by n.score_total desc, n.signal_rank asc, n.trading_value desc
+            )
             from numbered n
             where n.rn <= %(featured_limit)s::int
           ), '[]'::jsonb) as featured_rows,
           coalesce((
-            select jsonb_agg(to_jsonb(n) - 'rn' order by n.signal_rank asc)
+            select jsonb_agg(
+              to_jsonb(n) - 'rn'
+              order by n.score_total desc, n.signal_rank asc, n.trading_value desc
+            )
             from numbered n
             cross join paging p
-            where n.rn > ((p.safe_page - 1) * %(page_size)s::int)
-              and n.rn <= (p.safe_page * %(page_size)s::int)
+            where n.rn > (%(featured_limit)s::int + ((p.safe_page - 1) * %(page_size)s::int))
+              and n.rn <= (%(featured_limit)s::int + (p.safe_page * %(page_size)s::int))
           ), '[]'::jsonb) as page_rows
         from selected_run sr
         cross join stats
@@ -474,6 +545,7 @@ class ReadRepository:
                 'aggregate': {'total': 0, 'signals_count': 0, 'grade_s': 0, 'grade_a': 0, 'grade_b': 0, 'grade_c': 0},
                 'featured_rows': [],
                 'page_rows': [],
+                'list_total': 0,
                 'page': 1,
                 'total_pages': 0,
             }
@@ -499,6 +571,7 @@ class ReadRepository:
             'aggregate': aggregate,
             'featured_rows': _as_list(row.get('featured_rows')),
             'page_rows': _as_list(row.get('page_rows')),
+            'list_total': int(row.get('list_total') or 0),
             'page': int(row.get('safe_page') or 1),
             'total_pages': int(row.get('total_pages') or 0),
         }
@@ -506,14 +579,14 @@ class ReadRepository:
     # 이 메서드는 누적 성과 화면 데이터를 단일 SQL 로 반환한다.
     def fetch_performance_bundle(
         self,
-        date_arg: str | None,
+        date_from: date,
+        date_to: date,
         grade_filter: str,
         outcome_filter: str,
         query: str,
         page: int,
         page_size: int,
     ) -> dict[str, Any]:
-        run_date = _normalize_run_date(date_arg)
         normalized_grade = _normalize_grade_filter(grade_filter)
         normalized_outcome = str(outcome_filter or 'ALL').strip().upper()
         if normalized_outcome not in {'ALL', 'WIN', 'LOSS', 'OPEN'}:
@@ -523,12 +596,17 @@ class ReadRepository:
         requested_page = max(1, int(page))
 
         sql = """
-        with selected_run as (
-          select run_id, run_date, created_at, runtime_meta, total_candidates, filtered_count
+        with latest_runs_by_date as (
+          select distinct on (run_date)
+            run_id, run_date, created_at, runtime_meta, total_candidates, filtered_count
           from jongga_runs
-          where (%(run_date)s::date is null or run_date = %(run_date)s::date)
-          order by created_at desc
-          limit 1
+          where run_date between %(date_from)s::date and %(date_to)s::date
+          order by run_date desc, created_at desc
+        ),
+        selected_runs as (
+          select run_id, run_date, created_at, runtime_meta, total_candidates, filtered_count
+          from latest_runs_by_date
+          order by run_date desc, created_at desc
         )
         select
           sr.run_id,
@@ -538,6 +616,7 @@ class ReadRepository:
           sr.total_candidates,
           sr.filtered_count,
           tp.tracked_id,
+          tp.run_date as signal_date,
           tp.featured_rank,
           tp.signal_rank,
           tp.grade,
@@ -556,7 +635,7 @@ class ReadRepository:
             when ohlcv.open_price is not null then 'KRX_OPEN'
             else null
           end as eval_09_venue
-        from selected_run sr
+        from selected_runs sr
         join jongga_tracked_picks tp on tp.run_id = sr.run_id
         left join lateral (
           select min(candidate_date) as eval_date
@@ -590,11 +669,12 @@ class ReadRepository:
             or lower(tp.stock_code) like %(keyword_like)s
             or lower(tp.stock_name) like %(keyword_like)s
           )
-        order by tp.featured_rank asc, tp.signal_rank asc
+        order by sr.run_date desc, tp.featured_rank asc, tp.signal_rank asc
         """
 
         params = {
-            'run_date': run_date,
+            'date_from': date_from,
+            'date_to': date_to,
             'grade_filter': normalized_grade,
             'keyword': keyword,
             'keyword_like': keyword_like,
@@ -605,7 +685,7 @@ class ReadRepository:
                 rows = [dict(row) for row in cur.fetchall()]
 
         if not rows:
-            meta = self.fetch_run_meta(date_arg)
+            meta = self.fetch_run_meta_between(date_from, date_to)
             run_meta = None
             if meta:
                 run_meta = {

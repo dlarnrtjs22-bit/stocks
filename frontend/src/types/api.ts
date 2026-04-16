@@ -59,6 +59,7 @@ export interface ClosingBetItem {
   inst_5d: number;
   market_context: Record<string, unknown>;
   program_context: Record<string, unknown>;
+  stock_program_context: Record<string, unknown>;
   external_market_context: Record<string, unknown>;
   market_policy: Record<string, unknown>;
   minute_pattern_label: string;

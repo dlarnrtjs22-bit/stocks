@@ -25,11 +25,11 @@ def _build_database_url() -> str:
     if direct_url:
         return direct_url
 
-    host = str(os.getenv('SUPABASE_DB_HOST', 'localhost')).strip()
+    host = str(os.getenv('SUPABASE_DB_HOST', 'aws-1-ap-southeast-2.pooler.supabase.com')).strip()
     port = str(os.getenv('SUPABASE_DB_PORT', '5432')).strip()
-    db_name = str(os.getenv('SUPABASE_DB_NAME', 'stocks')).strip()
-    user = str(os.getenv('SUPABASE_DB_USER', 'postgres')).strip()
-    password = str(os.getenv('SUPABASE_DB_PASSWORD', ''))
+    db_name = str(os.getenv('SUPABASE_DB_NAME', 'postgres')).strip()
+    user = str(os.getenv('SUPABASE_DB_USER', 'postgres.oatjwoapytaqqyvhfirx')).strip()
+    password = str(os.getenv('SUPABASE_DB_PASSWORD', 'bnjrho12p!A'))
     return f"postgresql://{user}:{quote(password, safe='')}@{host}:{port}/{db_name}"
 
 

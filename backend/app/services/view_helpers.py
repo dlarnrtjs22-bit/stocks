@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
+from batch.runtime_source.engine.config import Grade, SignalConfig
+
+
+_SIGNAL_CONFIG = SignalConfig.default()
 
 
 # 이 함수는 숫자를 안전하게 float 로 바꾼다.
@@ -63,6 +67,17 @@ def normalize_date_arg(date_arg: str | None) -> str:
     if not date_arg or str(date_arg).strip().lower() == 'latest':
         return 'latest'
     return str(date_arg).strip()
+
+
+def infer_signal_grade(score_total: Any, trading_value: Any, change_pct: Any) -> str:
+    score = safe_int(score_total, 0)
+    trading = safe_int(trading_value, 0)
+    change = safe_float(change_pct, 0.0)
+    for grade in (Grade.S, Grade.A, Grade.B):
+        cfg = _SIGNAL_CONFIG.grade_configs[grade]
+        if trading >= cfg.min_trading_value and cfg.min_change_pct <= change <= cfg.max_change_pct and score >= cfg.min_score:
+            return grade.value
+    return Grade.C.value
 
 
 # 이 함수는 종목명에서 화면 태그에 사용할 간단한 테마를 추론한다.

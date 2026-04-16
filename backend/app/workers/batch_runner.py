@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
+
 from backend.app.core.config import settings
 
 COLLECTOR_SOURCES = {'naver', 'kiwoom'}
@@ -125,10 +127,10 @@ class BatchRunner:
                 'default_source': 'kiwoom',
                 'supported_sources': ['naver', 'kiwoom'],
                 'commands': {
-                    'naver': [python_exe, str(runtime_root / 'pipelines' / 'kiwoom_bootstrap_collect.py'), '--steps', 'program,intraday', '--intraday-top', '80'],
-                    'kiwoom': [python_exe, str(runtime_root / 'pipelines' / 'kiwoom_bootstrap_collect.py'), '--steps', 'program,intraday', '--intraday-top', '80'],
+                    'naver': [python_exe, str(runtime_root / 'pipelines' / 'kiwoom_bootstrap_collect.py'), '--steps', 'program,stock_program,intraday', '--intraday-top', '80'],
+                    'kiwoom': [python_exe, str(runtime_root / 'pipelines' / 'kiwoom_bootstrap_collect.py'), '--steps', 'program,stock_program,intraday', '--intraday-top', '80'],
                 },
-                'output_target': 'db:public.kiwoom_intraday_feature_snapshots + public.kiwoom_program_snapshots',
+                'output_target': 'db:public.kiwoom_intraday_feature_snapshots + public.kiwoom_program_snapshots + public.kiwoom_stock_program_*',
             },
             'vcp_signals': {
                 'id': 'vcp_signals',
@@ -274,6 +276,18 @@ class BatchRunner:
         child_env['CHATGPT_OAUTH_TOKEN_FILE'] = str(settings.project_root / 'chatgptOauthKey.json')
         child_env['COLLECTOR_SOURCE'] = effective_source
         child_env.pop('CODEX_CHAT_UI_PYTHON_DIR', None)
+
+        # 백엔드가 이미 사용 중인 DB 접속 URL을 배치 자식 프로세스에 그대로 전달한다.
+        if settings.database_url:
+            child_env['SUPABASE_DATABASE_URL'] = settings.database_url
+            child_env['DATABASE_URL'] = settings.database_url
+
+        # 로컬 .env 가 있을 경우 누락된 항목만 보완한다.
+        env_path = settings.project_root / '.env'
+        if env_path.exists():
+            for key, value in dotenv_values(env_path).items():
+                if key and value is not None and key not in child_env:
+                    child_env[key] = str(value)
 
         exit_code = 1
         try:

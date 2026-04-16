@@ -60,7 +60,9 @@ select
   coalesce((js.score->>'news_attention')::int, 0) as score_news_attention,
   coalesce(js.ai_overall->'sector_leadership', '{}'::jsonb) as sector_leadership,
   coalesce(js.ai_overall->'intraday_pressure', '{}'::jsonb) as intraday_pressure,
-  coalesce(js.ai_overall->'news_attention', '{}'::jsonb) as news_attention
+  coalesce(js.ai_overall->'news_attention', '{}'::jsonb) as news_attention,
+  coalesce((js.score->>'stock_program')::int, 0) as score_stock_program,
+  coalesce(js.ai_overall->'stock_program_context', '{}'::jsonb) as stock_program_context
 from jongga_runs jr
 join jongga_signals js on jr.run_id = js.run_id;
 

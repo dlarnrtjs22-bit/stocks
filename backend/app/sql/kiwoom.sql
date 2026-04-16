@@ -37,6 +37,65 @@ create table if not exists kiwoom_condition_hits (
   primary key (trade_date, ticker, condition_seq)
 );
 
+create table if not exists kiwoom_program_snapshots (
+  trade_date date not null,
+  snapshot_time timestamptz not null,
+  market text not null,
+  market_status text,
+  arbitrage_buy bigint,
+  arbitrage_sell bigint,
+  arbitrage_net bigint,
+  non_arbitrage_buy bigint,
+  non_arbitrage_sell bigint,
+  non_arbitrage_net bigint,
+  total_buy bigint,
+  total_sell bigint,
+  total_net bigint,
+  updated_at timestamptz not null default now(),
+  primary key (snapshot_time, market)
+);
+
+create table if not exists kiwoom_stock_program_trades_latest (
+  trade_date date not null,
+  ticker text not null,
+  stock_name text,
+  market text,
+  venue text,
+  latest_time timestamptz,
+  current_price numeric,
+  change_pct numeric,
+  program_sell_amt bigint,
+  program_buy_amt bigint,
+  program_net_buy_amt bigint,
+  program_sell_qty bigint,
+  program_buy_qty bigint,
+  program_net_buy_qty bigint,
+  delta_10m_amt bigint,
+  delta_30m_amt bigint,
+  delta_10m_qty bigint,
+  delta_30m_qty bigint,
+  updated_at timestamptz not null default now(),
+  primary key (trade_date, ticker)
+);
+
+create table if not exists kiwoom_stock_program_daily (
+  trade_date date not null,
+  ticker text not null,
+  stock_name text,
+  venue text,
+  current_price numeric,
+  change_pct numeric,
+  trade_volume bigint,
+  program_sell_amt bigint,
+  program_buy_amt bigint,
+  program_net_buy_amt bigint,
+  program_sell_qty bigint,
+  program_buy_qty bigint,
+  program_net_buy_qty bigint,
+  updated_at timestamptz not null default now(),
+  primary key (trade_date, ticker)
+);
+
 create table if not exists kiwoom_account_snapshot_latest (
   account_no text primary key,
   snapshot_time timestamptz,
@@ -129,5 +188,8 @@ create table if not exists dashboard_cache_latest (
 
 create index if not exists idx_kiwoom_intraday_trade_date on kiwoom_intraday_features_latest(trade_date desc, market, ticker);
 create index if not exists idx_kiwoom_condition_hits_trade_date on kiwoom_condition_hits(trade_date desc, ticker);
+create index if not exists idx_kiwoom_program_snapshots_trade_time on kiwoom_program_snapshots(trade_date desc, snapshot_time desc, market);
+create index if not exists idx_kiwoom_stock_program_latest_trade_date on kiwoom_stock_program_trades_latest(trade_date desc, ticker);
+create index if not exists idx_kiwoom_stock_program_daily_trade_date on kiwoom_stock_program_daily(trade_date desc, ticker);
 create index if not exists idx_kiwoom_positions_account on kiwoom_account_positions_latest(account_no, updated_at desc);
 create index if not exists idx_kiwoom_orders_account on kiwoom_order_execution_events(account_no, updated_at desc);

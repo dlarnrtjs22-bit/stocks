@@ -8,11 +8,31 @@ import { PerformancePage } from '../pages/PerformancePage';
 import type { BatchListResponse, BatchLogResponse, ClosingBetResponse, DashboardResponse, DateListResponse, PerformanceRefreshResponse, PerformanceResponse, PreviewResponse, ViewKey } from '../types/api';
 
 // 이 컴포넌트는 새 프로젝트 프론트 전체 상태를 관리한다.
+function formatInputDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function defaultPerformanceRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(end.getDate() - 6);
+  return {
+    from: formatInputDate(start),
+    to: formatInputDate(end),
+  };
+}
+
 export function App() {
+  const initialPerformanceRange = defaultPerformanceRange();
   const [view, setView] = useState<ViewKey>('dashboard');
   const [batchSource, setBatchSource] = useState('naver');
   const [dates, setDates] = useState<DateListResponse>({ dates: [], latest: null });
   const [selectedDate, setSelectedDate] = useState('latest');
+  const [performanceDateFrom, setPerformanceDateFrom] = useState(initialPerformanceRange.from);
+  const [performanceDateTo, setPerformanceDateTo] = useState(initialPerformanceRange.to);
   const [gradeFilter, setGradeFilter] = useState('ALL');
   const [performanceOutcome, setPerformanceOutcome] = useState('ALL');
   const [closingPage, setClosingPage] = useState(1);
@@ -51,7 +71,7 @@ export function App() {
     return '최종 signal 결과를 기반으로 누적 성과를 조회합니다.';
   }, [view]);
 
-  async function refreshDashboard(refreshAccount = false) {
+  async function refreshDashboard(refreshAccount = false, forceRefresh = false) {
     if (!dashboardData) {
       setContentLoading(true);
     }
@@ -61,7 +81,7 @@ export function App() {
       setDashboardRefreshing(true);
     }
     try {
-      setDashboardData(await getDashboard(refreshAccount));
+      setDashboardData(await getDashboard(refreshAccount, forceRefresh));
     } finally {
       setContentLoading(false);
       setDashboardRefreshing(false);
@@ -101,7 +121,8 @@ export function App() {
     setPerformanceRefreshing(true);
     try {
       const params = new URLSearchParams({
-        date: selectedDate,
+        date_from: performanceDateFrom,
+        date_to: performanceDateTo,
         grade: gradeFilter,
         outcome: performanceOutcome,
         q: performanceQuery,
@@ -118,7 +139,7 @@ export function App() {
   async function handleQuickRefreshPerformance() {
     setPerformanceQuickRefreshing(true);
     try {
-      const result = await quickRefreshPerformance(selectedDate);
+      const result = await quickRefreshPerformance(performanceDateFrom, performanceDateTo);
       setPerformanceRefreshInfo(result);
       await refreshPerformance();
     } finally {
@@ -156,7 +177,7 @@ export function App() {
 
   useEffect(() => {
     if (view === 'dashboard') {
-      refreshDashboard(false).catch(console.error);
+      refreshDashboard(false, false).catch(console.error);
     }
   }, [view]);
 
@@ -176,7 +197,7 @@ export function App() {
     if (view === 'performance') {
       refreshPerformance().catch(console.error);
     }
-  }, [view, selectedDate, gradeFilter, performanceOutcome, performancePage, performanceQuery]);
+  }, [view, performanceDateFrom, performanceDateTo, gradeFilter, performanceOutcome, performancePage, performanceQuery]);
 
   return (
     <AppShell view={view} onChangeView={setView}>
@@ -188,10 +209,18 @@ export function App() {
         {view !== 'dashboard' && view !== 'data_status' ? (
           <div className="toolbar compact">
             <div className="toolbar-left">
-              <select value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setClosingPage(1); setPerformancePage(1); }}>
-                <option value="latest">latest</option>
-                {dates.dates.map((date) => <option key={date} value={date}>{date}</option>)}
-              </select>
+              {view === 'closing' ? (
+                <select value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setClosingPage(1); }}>
+                  <option value="latest">latest</option>
+                  {dates.dates.map((date) => <option key={date} value={date}>{date}</option>)}
+                </select>
+              ) : null}
+              {view === 'performance' ? (
+                <>
+                  <input type="date" value={performanceDateFrom} onChange={(event) => { setPerformanceDateFrom(event.target.value); setPerformancePage(1); }} />
+                  <input type="date" value={performanceDateTo} onChange={(event) => { setPerformanceDateTo(event.target.value); setPerformancePage(1); }} />
+                </>
+              ) : null}
               <select value={gradeFilter} onChange={(event) => { setGradeFilter(event.target.value); setClosingPage(1); setPerformancePage(1); }}>
                 <option value="ALL">ALL</option>
                 <option value="S">S</option>
@@ -232,8 +261,8 @@ export function App() {
         <DashboardPage
           loading={contentLoading}
           data={dashboardData}
-          onRefresh={() => refreshDashboard(false)}
-          onRefreshAccount={() => refreshDashboard(true)}
+          onRefresh={() => refreshDashboard(false, true)}
+          onRefreshAccount={() => refreshDashboard(true, true)}
           dashboardRefreshing={dashboardRefreshing}
           accountRefreshing={accountRefreshing}
         />

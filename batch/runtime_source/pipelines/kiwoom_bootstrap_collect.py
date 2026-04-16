@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +180,10 @@ def _program_market_code(market: str, venue: str) -> str:
     return {"KRX": "P10102", "NXT": "P101_NX02"}.get(venue, "P10102")
 
 
+def _program_market_short(market: str) -> str:
+    return "0" if str(market or "").upper() == "KOSPI" else "1"
+
+
 def collect_program_trend(client: KiwoomRESTClient) -> pd.DataFrame:
     today = date.today()
     venue, venue_code = effective_venue()
@@ -220,6 +224,180 @@ def collect_program_trend(client: KiwoomRESTClient) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _build_priority_candidates(repo: SupabaseRepository, limit: int) -> pd.DataFrame:
+    snapshot = repo.load_snapshot_df()
+    if snapshot.empty:
+        return pd.DataFrame()
+    snapshot["trading_value"] = pd.to_numeric(snapshot["trading_value"], errors="coerce").fillna(0)
+    snapshot["ticker"] = snapshot["ticker"].astype(str).str.zfill(6)
+    ranked_snapshot = snapshot.sort_values(["trading_value", "change_pct"], ascending=[False, False]).copy()
+
+    latest_payload = repo.load_run_payload("latest") or {}
+    latest_signals = latest_payload.get("signals") if isinstance(latest_payload.get("signals"), list) else []
+    signal_rows: list[dict[str, Any]] = []
+    for item in latest_signals:
+        if not isinstance(item, dict):
+            continue
+        base_grade = str((item.get("ai_overall") or {}).get("base_grade") or item.get("grade") or "C").upper()
+        if base_grade not in {"S", "A", "B"}:
+            continue
+        signal_rows.append(
+            {
+                "ticker": str(item.get("stock_code", "")).zfill(6),
+                "priority": 0,
+            }
+        )
+
+    ranked_snapshot["priority"] = 1
+    candidate_pool = ranked_snapshot[["ticker", "name", "market", "trading_value", "change_pct", "priority"]].copy()
+    if signal_rows:
+        signal_df = pd.DataFrame(signal_rows)
+        prioritized = signal_df[["ticker"]].merge(candidate_pool.drop(columns=["priority"]), on="ticker", how="left")
+        prioritized["priority"] = 0
+        extra_candidates = ranked_snapshot[~ranked_snapshot["ticker"].isin(signal_df["ticker"].tolist())][["ticker", "name", "market", "trading_value", "change_pct", "priority"]]
+        candidate_pool = pd.concat([prioritized, extra_candidates], ignore_index=True)
+    candidate_pool = candidate_pool.drop_duplicates(subset=["ticker"], keep="first")
+    return candidate_pool.sort_values(["priority", "trading_value", "change_pct"], ascending=[True, False, False]).head(limit)
+
+
+def _parse_program_time(value: Any, trade_date: date) -> datetime | None:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) >= 14:
+        return _to_dt(digits[:14])
+    if len(digits) >= 6:
+        return _to_dt(trade_date.strftime("%Y%m%d") + digits[:6])
+    return None
+
+
+def _collect_stock_program_payload(
+    client: KiwoomRESTClient,
+    *,
+    ticker: str,
+    market: str,
+    venue: str,
+    trade_date: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    code = venue_stock_code(ticker, venue)
+    intraday_body = client.request(
+        "/api/dostk/mrkcond",
+        "ka90008",
+        {
+            "stk_cd": code,
+            "date": trade_date.strftime("%Y%m%d"),
+            "amt_qty_tp": "1",
+        },
+    ).body
+    daily_body = client.request(
+        "/api/dostk/mrkcond",
+        "ka90013",
+        {
+            "stk_cd": code,
+            "date": trade_date.strftime("%Y%m%d"),
+            "amt_qty_tp": "1",
+            "mrkt_tp": _program_market_short(market),
+        },
+    ).body
+    intraday_rows = intraday_body.get("stk_tm_prm_trde_trnsn") if isinstance(intraday_body.get("stk_tm_prm_trde_trnsn"), list) else []
+    daily_rows = daily_body.get("stk_daly_prm_trde_trnsn") if isinstance(daily_body.get("stk_daly_prm_trde_trnsn"), list) else []
+    return intraday_rows, daily_rows
+
+
+def collect_stock_program_data(repo: SupabaseRepository, client: KiwoomRESTClient, limit: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    today = date.today()
+    venue, _ = effective_venue()
+    candidates = _build_priority_candidates(repo, limit)
+    if candidates.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    latest_rows: list[dict[str, Any]] = []
+    daily_rows: list[dict[str, Any]] = []
+
+    for _, item in candidates.iterrows():
+        ticker = str(item.get("ticker", "")).zfill(6)
+        market = str(item.get("market", "")).upper()
+        name = str(item.get("name", ""))
+        if not ticker:
+            continue
+        try:
+            intraday_rows, daily_items = _collect_stock_program_payload(
+                client,
+                ticker=ticker,
+                market=market,
+                venue=venue,
+                trade_date=today,
+            )
+        except KiwoomAPIError:
+            continue
+
+        intraday_rows = [row for row in intraday_rows if isinstance(row, dict)]
+        if intraday_rows:
+            normalized: list[dict[str, Any]] = []
+            for row in intraday_rows:
+                row_time = _parse_program_time(row.get("tm"), today)
+                if row_time is None or row_time.date() != today:
+                    continue
+                normalized.append({"time": row_time, "raw": row})
+            normalized.sort(key=lambda entry: entry["time"])
+            if normalized:
+                latest = normalized[-1]["raw"]
+                latest_time = normalized[-1]["time"]
+                latest_net_amt = _to_int(latest.get("prm_netprps_amt")) * 1_000_000
+                latest_net_qty = _to_int(latest.get("prm_netprps_qty"))
+
+                baseline_10 = next((entry["raw"] for entry in normalized if latest_time - entry["time"] >= timedelta(minutes=10)), normalized[0]["raw"])
+                baseline_30 = next((entry["raw"] for entry in normalized if latest_time - entry["time"] >= timedelta(minutes=30)), normalized[0]["raw"])
+                latest_rows.append(
+                    {
+                        "trade_date": today.isoformat(),
+                        "ticker": ticker,
+                        "stock_name": name,
+                        "market": market,
+                        "venue": venue,
+                        "latest_time": latest_time.isoformat(),
+                        "current_price": _to_float(latest.get("cur_prc")),
+                        "change_pct": _to_float(latest.get("flu_rt")),
+                        "program_sell_amt": _to_int(latest.get("prm_sell_amt")) * 1_000_000,
+                        "program_buy_amt": _to_int(latest.get("prm_buy_amt")) * 1_000_000,
+                        "program_net_buy_amt": latest_net_amt,
+                        "program_sell_qty": _to_int(latest.get("prm_sell_qty")),
+                        "program_buy_qty": _to_int(latest.get("prm_buy_qty")),
+                        "program_net_buy_qty": latest_net_qty,
+                        "delta_10m_amt": latest_net_amt - (_to_int(baseline_10.get("prm_netprps_amt")) * 1_000_000),
+                        "delta_30m_amt": latest_net_amt - (_to_int(baseline_30.get("prm_netprps_amt")) * 1_000_000),
+                        "delta_10m_qty": latest_net_qty - _to_int(baseline_10.get("prm_netprps_qty")),
+                        "delta_30m_qty": latest_net_qty - _to_int(baseline_30.get("prm_netprps_qty")),
+                    }
+                )
+
+        for row in daily_items:
+            if not isinstance(row, dict):
+                continue
+            trade_date_raw = str(row.get("dt", "") or "")
+            if len(trade_date_raw) != 8:
+                continue
+            daily_rows.append(
+                {
+                    "trade_date": f"{trade_date_raw[:4]}-{trade_date_raw[4:6]}-{trade_date_raw[6:8]}",
+                    "ticker": ticker,
+                    "stock_name": name,
+                    "venue": str(row.get("stex_tp", venue) or venue),
+                    "current_price": _to_float(row.get("cur_prc")),
+                    "change_pct": _to_float(row.get("flu_rt")),
+                    "trade_volume": _to_int(row.get("trde_qty")),
+                    "program_sell_amt": _to_int(row.get("prm_sell_amt")) * 1_000_000,
+                    "program_buy_amt": _to_int(row.get("prm_buy_amt")) * 1_000_000,
+                    "program_net_buy_amt": _to_int(row.get("prm_netprps_amt")) * 1_000_000,
+                    "program_sell_qty": _to_int(row.get("prm_sell_qty")),
+                    "program_buy_qty": _to_int(row.get("prm_buy_qty")),
+                    "program_net_buy_qty": _to_int(row.get("prm_netprps_qty")),
+                }
+            )
+
+    latest_df = pd.DataFrame(latest_rows).drop_duplicates(subset=["trade_date", "ticker"]).reset_index(drop=True) if latest_rows else pd.DataFrame()
+    daily_df = pd.DataFrame(daily_rows).drop_duplicates(subset=["trade_date", "ticker"]).sort_values(["ticker", "trade_date"]).reset_index(drop=True) if daily_rows else pd.DataFrame()
+    return latest_df, daily_df
 
 
 def _derive_minute_pattern(minute_rows: list[dict[str, Any]]) -> tuple[str, float]:
@@ -389,7 +567,7 @@ def build_snapshot(universe: pd.DataFrame, ohlcv: pd.DataFrame, intraday: pd.Dat
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kiwoom bootstrap collector for closing-bet system")
-    parser.add_argument("--steps", default="ohlcv,flows,program,intraday,snapshot")
+    parser.add_argument("--steps", default="ohlcv,flows,program,stock_program,intraday,snapshot")
     parser.add_argument("--limit-per-market", type=int, default=100)
     parser.add_argument("--intraday-top", type=int, default=60)
     parser.add_argument("--refresh-today", default="1")
@@ -427,6 +605,16 @@ def main() -> None:
             repo.upsert_program_trend(program)
             repo.upsert_kiwoom_program_snapshots(program)
             print(f"  program rows: {len(program)}")
+
+    if "stock_program" in steps:
+        print("[kiwoom] stock program collecting...")
+        stock_program_latest, stock_program_daily = collect_stock_program_data(repo, rest, args.intraday_top)
+        if not stock_program_latest.empty:
+            repo.upsert_kiwoom_stock_program_latest(stock_program_latest)
+            print(f"  stock program latest rows: {len(stock_program_latest)}")
+        if not stock_program_daily.empty:
+            repo.upsert_kiwoom_stock_program_daily(stock_program_daily)
+            print(f"  stock program daily rows: {len(stock_program_daily)}")
 
     if "intraday" in steps:
         print("[kiwoom] intraday features collecting...")

@@ -9,8 +9,7 @@ from batch.runtime_source.engine.human_labels import analysis_status_label, deci
 from batch.runtime_source.engine.scoring_constants import TOTAL_RULE_SCORE_MAX
 from backend.app.repositories.read_repository import ReadRepository
 from backend.app.schemas.closing_bet import BasisPayload, BasisSourceItem, ClosingBetItem, ClosingBetResponse, PaginationPayload
-from backend.app.services.pick_selector import select_top_candidates
-from backend.app.services.view_helpers import infer_themes, normalize_date_arg, safe_float, safe_int, safe_dt, time_ago
+from backend.app.services.view_helpers import infer_signal_grade, infer_themes, normalize_date_arg, safe_float, safe_int, safe_dt, time_ago
 
 
 FEATURED_PICK_LIMIT = 5
@@ -87,9 +86,11 @@ class ClosingBetService:
 
     # 이 메서드는 view 행 하나를 화면용 카드 데이터로 바꾼다.
     def _to_item(self, row: dict[str, Any], fallback_external_context: dict[str, Any] | None = None) -> ClosingBetItem:
+        resolved_grade = infer_signal_grade(row.get('score_total'), row.get('trading_value'), row.get('change_pct'))
         references = row.get('news_items') if isinstance(row.get('news_items'), list) else []
         market_context = row.get('market_context') if isinstance(row.get('market_context'), dict) else {}
         program_context = row.get('program_context') if isinstance(row.get('program_context'), dict) else {}
+        stock_program_context = row.get('stock_program_context') if isinstance(row.get('stock_program_context'), dict) else {}
         external_market_context = row.get('external_market_context') if isinstance(row.get('external_market_context'), dict) else dict(fallback_external_context or {})
         market_policy = row.get('market_policy') if isinstance(row.get('market_policy'), dict) else {}
         ai_evidence = row.get('ai_evidence') if isinstance(row.get('ai_evidence'), list) else []
@@ -97,7 +98,7 @@ class ClosingBetService:
         score_total = safe_int(row.get('score_total'))
         ai_text = str(row.get('ai_summary') or '').strip() or 'AI 분석 결과가 없어 규칙점수 기반 기본의견을 표시합니다.'
         policy = decide_trade_opinion(
-            grade=row.get('base_grade', row.get('grade', 'C')),
+            grade=resolved_grade,
             total_score=score_total,
             market_context=market_context,
             program_context=program_context,
@@ -128,8 +129,8 @@ class ClosingBetService:
             ticker=str(row.get('stock_code', '')).zfill(6),
             name=str(row.get('stock_name', '')),
             market=str(row.get('market', '')),
-            grade=str(row.get('grade', 'C')),
-            base_grade=str(row.get('base_grade', row.get('grade', 'C'))),
+            grade=resolved_grade,
+            base_grade=resolved_grade,
             score_total=score_total,
             score_max=TOTAL_RULE_SCORE_MAX,
             scores={
@@ -141,6 +142,7 @@ class ClosingBetService:
                 'consolidation': safe_int(row.get('score_consolidation'), 0),
                 'market': safe_int(row.get('score_market'), 0),
                 'program': safe_int(row.get('score_program'), 0),
+                'stock_program': safe_int(row.get('score_stock_program'), 0),
                 'sector': safe_int(row.get('score_sector'), 0),
                 'leader': safe_int(row.get('score_leader'), 0),
                 'intraday': safe_int(row.get('score_intraday'), 0),
@@ -168,6 +170,7 @@ class ClosingBetService:
             inst_5d=safe_int(row.get('inst_5d'), 0),
             market_context=market_context,
             program_context=program_context,
+            stock_program_context=stock_program_context,
             external_market_context=external_market_context,
             market_policy=market_policy,
             minute_pattern_label=minute_pattern_label(minute_pattern),
@@ -176,10 +179,18 @@ class ClosingBetService:
             chart_url=f"https://finance.naver.com/item/fchart.naver?code={str(row.get('stock_code', '')).zfill(6)}",
         )
 
+    def _candidate_sort_key(self, row: dict[str, Any]) -> tuple[int, int, int, str]:
+        return (
+            -safe_int(row.get('score_total'), 0),
+            safe_int(row.get('signal_rank'), 9999),
+            -safe_int(row.get('trading_value'), 0),
+            str(row.get('stock_code', '') or ''),
+        )
+
     # 이 메서드는 종가배팅 화면 전체 응답을 반환한다.
     def get_closing_bet(self, date_arg: str | None, grade_filter: str, query: str, page: int, page_size: int) -> ClosingBetResponse:
         request_date = normalize_date_arg(date_arg)
-        bundle = self.repository.fetch_closing_bundle(date_arg, grade_filter, query, page, page_size)
+        bundle = self.repository.fetch_closing_bundle(date_arg, grade_filter, query, page, page_size, featured_limit=FEATURED_PICK_LIMIT)
         run_meta = bundle['run_meta']
         basis = self._build_basis(request_date, run_meta)
         runtime_meta = run_meta.get('runtime_meta') if isinstance(run_meta, dict) and isinstance(run_meta.get('runtime_meta'), dict) else {}
@@ -196,9 +207,26 @@ class ClosingBetService:
             'C': safe_int(aggregate.get('grade_c'), 0),
         }
         signals_count = safe_int(aggregate.get('signals_count'), 0)
-        featured_source_rows = select_top_candidates(list(bundle['featured_rows']), max_items=FEATURED_PICK_LIMIT, fallback_sector='General')
+        featured_candidates = []
+        seen_featured: set[str] = set()
+        for row in sorted([*list(bundle['featured_rows']), *list(bundle['page_rows'])], key=self._candidate_sort_key):
+            resolved_grade = infer_signal_grade(row.get('score_total'), row.get('trading_value'), row.get('change_pct'))
+            code = str(row.get('stock_code', '') or '')
+            if resolved_grade not in {'S', 'A', 'B'} or not code or code in seen_featured:
+                continue
+            featured_candidates.append(row)
+            seen_featured.add(code)
+            if len(featured_candidates) >= FEATURED_PICK_LIMIT:
+                break
+        featured_source_rows = featured_candidates
         featured_items = [self._to_item(row, fallback_external_context) for row in featured_source_rows]
-        page_items = [self._to_item(row, fallback_external_context) for row in bundle['page_rows']]
+        featured_codes = {str(row.get('stock_code', '') or '') for row in featured_source_rows}
+        page_items = [
+            self._to_item(row, fallback_external_context)
+            for row in bundle['page_rows']
+            if str(row.get('stock_code', '') or '') not in featured_codes
+        ]
+        pagination_total = safe_int(bundle.get('list_total'), 0)
         safe_page = safe_int(bundle.get('page'), 1)
         total_pages = safe_int(bundle.get('total_pages'), 0)
 
@@ -213,7 +241,7 @@ class ClosingBetService:
             grade_counts=grade_counts,
             featured_items=featured_items,
             items=page_items,
-            pagination=PaginationPayload(page=safe_page, page_size=page_size, total=total, total_pages=total_pages),
+            pagination=PaginationPayload(page=safe_page, page_size=page_size, total=pagination_total, total_pages=total_pages),
             filters={'grade': grade_filter, 'q': str(query or '')},
             basis=basis,
         )

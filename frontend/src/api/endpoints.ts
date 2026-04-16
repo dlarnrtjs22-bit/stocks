@@ -14,8 +14,8 @@ export function getPerformance(params: URLSearchParams) {
   return fetchJson<PerformanceResponse>(`/api/performance?${params.toString()}`);
 }
 
-export function quickRefreshPerformance(date: string) {
-  const params = new URLSearchParams({ date });
+export function quickRefreshPerformance(dateFrom: string, dateTo: string) {
+  const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
   return fetchJson<PerformanceRefreshResponse>(`/api/performance/quick-refresh?${params.toString()}`, {
     method: 'POST',
   });
@@ -49,10 +49,13 @@ export function getBatchLogs(taskId: string) {
   return fetchJson<BatchLogResponse>(`/api/batches/${taskId}/logs`);
 }
 
-export function getDashboard(refreshAccount = false) {
+export function getDashboard(refreshAccount = false, forceRefresh = false) {
   const params = new URLSearchParams();
   if (refreshAccount) {
     params.set('refresh_account', 'true');
+  }
+  if (forceRefresh) {
+    params.set('force_refresh', 'true');
   }
   const query = params.toString();
   return fetchJson<DashboardResponse>(`/api/dashboard${query ? `?${query}` : ''}`);

@@ -11,6 +11,7 @@ from engine.models import (
     NewsItem,
     NewsAttentionData,
     ProgramTradeData,
+    StockProgramData,
     ScoreDetail,
     SectorLeadershipData,
     StockData,
@@ -30,6 +31,7 @@ class Scorer:
         supply: Optional[SupplyData],
         market_context: Optional[MarketContextData],
         program_trade: Optional[ProgramTradeData],
+        stock_program: Optional[StockProgramData],
         sector_leadership: Optional[SectorLeadershipData],
         intraday_pressure: Optional[IntradayPressureData],
         news_attention: Optional[NewsAttentionData],
@@ -133,6 +135,30 @@ class Scorer:
             )
             if checklist.program_supportive:
                 score.program = 1
+
+        if stock_program:
+            latest_ratio = stock_program.latest_net_buy_amt / max(float(stock.trading_value or 0), 1.0)
+            late_ratio_10 = stock_program.delta_10m_amt / max(float(stock.trading_value or 0), 1.0)
+            late_ratio_30 = stock_program.delta_30m_amt / max(float(stock.trading_value or 0), 1.0)
+            checklist.stock_program_supportive = bool(
+                stock_program.latest_net_buy_amt > 0
+                and (stock_program.delta_10m_amt > 0 or stock_program.delta_30m_amt > 0)
+            )
+            if (
+                stock_program.delta_10m_amt >= 8_000_000_000
+                or stock_program.delta_30m_amt >= 15_000_000_000
+                or late_ratio_10 >= 0.008
+                or late_ratio_30 >= 0.015
+                or latest_ratio >= 0.02
+            ):
+                score.stock_program = 2
+            elif (
+                stock_program.latest_net_buy_amt > 0
+                or stock_program.daily_net_buy_amt_5d > 0
+                or late_ratio_10 >= 0.003
+                or late_ratio_30 >= 0.006
+            ):
+                score.stock_program = 1
 
         if sector_leadership:
             checklist.sector_supportive = bool(

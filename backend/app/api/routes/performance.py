@@ -13,19 +13,21 @@ service = PerformanceService()
 # 이 엔드포인트는 누적 성과 화면 전체 데이터를 반환한다.
 @router.get('', response_model=PerformanceResponse)
 def get_performance(
-    date: str = Query('latest'),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
     grade: str = Query('ALL'),
     outcome: str = Query('ALL'),
     q: str = Query(''),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=200),
 ) -> PerformanceResponse:
-    return service.get_performance(date, grade.upper(), outcome.upper(), q, page, page_size)
+    return service.get_performance(date_from, date_to, grade.upper(), outcome.upper(), q, page, page_size)
 
 
 @router.post('/quick-refresh', response_model=PerformanceRefreshResponse)
 def quick_refresh_performance(
-    date: str = Query('latest'),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
 ) -> PerformanceRefreshResponse:
-    return service.quick_refresh(date)
+    return service.quick_refresh(date_from, date_to)
 

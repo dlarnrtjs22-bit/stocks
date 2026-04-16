@@ -121,6 +121,40 @@ class ProgramTradeData:
 
 
 @dataclass
+class StockProgramData:
+    ticker: str
+    venue: str = ""
+    latest_time: datetime | None = None
+    current_price: float = 0.0
+    change_pct: float = 0.0
+    latest_net_buy_amt: int = 0
+    latest_net_buy_qty: int = 0
+    delta_10m_amt: int = 0
+    delta_30m_amt: int = 0
+    delta_10m_qty: int = 0
+    delta_30m_qty: int = 0
+    daily_net_buy_amt_5d: int = 0
+    daily_net_buy_qty_5d: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "venue": self.venue,
+            "latest_time": self.latest_time.isoformat() if isinstance(self.latest_time, datetime) else "",
+            "current_price": self.current_price,
+            "change_pct": self.change_pct,
+            "latest_net_buy_amt": self.latest_net_buy_amt,
+            "latest_net_buy_qty": self.latest_net_buy_qty,
+            "delta_10m_amt": self.delta_10m_amt,
+            "delta_30m_amt": self.delta_30m_amt,
+            "delta_10m_qty": self.delta_10m_qty,
+            "delta_30m_qty": self.delta_30m_qty,
+            "daily_net_buy_amt_5d": self.daily_net_buy_amt_5d,
+            "daily_net_buy_qty_5d": self.daily_net_buy_qty_5d,
+        }
+
+
+@dataclass
 class IntradayFeatureData:
     ticker: str
     venue: str = ""
@@ -270,6 +304,7 @@ class ScoreDetail:
     supply: int = 0
     market: int = 0
     program: int = 0
+    stock_program: int = 0
     sector: int = 0
     leader: int = 0
     intraday: int = 0
@@ -288,6 +323,7 @@ class ScoreDetail:
             + self.supply
             + self.market
             + self.program
+            + self.stock_program
             + self.sector
             + self.leader
             + self.intraday
@@ -305,6 +341,7 @@ class ScoreDetail:
             "supply": self.supply,
             "market": self.market,
             "program": self.program,
+            "stock_program": self.stock_program,
             "sector": self.sector,
             "leader": self.leader,
             "intraday": self.intraday,
@@ -325,6 +362,7 @@ class ChecklistDetail:
     volume_surge: bool = False
     market_supportive: bool = False
     program_supportive: bool = False
+    stock_program_supportive: bool = False
     sector_supportive: bool = False
     leader_confirmed: bool = False
     intraday_supportive: bool = False
@@ -340,6 +378,7 @@ class ChecklistDetail:
             "volume_surge": self.volume_surge,
             "market_supportive": self.market_supportive,
             "program_supportive": self.program_supportive,
+            "stock_program_supportive": self.stock_program_supportive,
             "sector_supportive": self.sector_supportive,
             "leader_confirmed": self.leader_confirmed,
             "intraday_supportive": self.intraday_supportive,

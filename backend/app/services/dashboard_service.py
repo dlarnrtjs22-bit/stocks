@@ -12,8 +12,7 @@ from batch.runtime_source.engine.theme_classifier import infer_theme
 from batch.runtime_source.providers.kiwoom_client import KiwoomRESTClient
 from backend.app.repositories.dashboard_repository import DashboardRepository
 from backend.app.schemas.dashboard import DashboardAccountPayload, DashboardMarketItem, DashboardPickPayload, DashboardResponse
-from backend.app.services.pick_selector import select_top_candidates
-from backend.app.services.view_helpers import safe_dt, safe_float, safe_int
+from backend.app.services.view_helpers import infer_signal_grade, safe_dt, safe_float, safe_int
 
 
 MAX_DASHBOARD_PICKS = 5
@@ -153,7 +152,7 @@ class DashboardService:
         return infer_theme(str(row.get("stock_name", "")), texts=texts, fallback="General")
 
     def _is_pick_eligible(self, row: dict[str, Any]) -> bool:
-        grade = str(row.get("base_grade", row.get("grade", "")) or "").upper()
+        grade = infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct"))
         ai_opinion = str(row.get("ai_opinion", "") or "").strip()
         score_total = safe_int(row.get("score_total"))
         trading_value = safe_int(row.get("trading_value"))
@@ -171,13 +170,21 @@ class DashboardService:
             return False
         return True
 
+    def _candidate_sort_key(self, row: dict[str, Any]) -> tuple[int, int, int, str]:
+        return (
+            -safe_int(row.get("score_total"), 0),
+            safe_int(row.get("signal_rank"), 9999),
+            -safe_int(row.get("trading_value"), 0),
+            str(row.get("stock_code", "") or ""),
+        )
+
     def _select_watchlist(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        rows = [row for row in rows if str(row.get("base_grade", row.get("grade", "")) or "").upper() in {"S", "A", "B"}]
-        return select_top_candidates(rows, max_items=MAX_DASHBOARD_PICKS, fallback_sector="General")
+        rows = [row for row in rows if infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct")) in {"S", "A", "B"}]
+        return sorted(rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
 
     def _select_picks(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = [row for row in rows if self._is_pick_eligible(row)]
-        return select_top_candidates(rows, max_items=MAX_DASHBOARD_PICKS, fallback_sector="General")
+        return sorted(rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
 
     def _fallback_pick_report(self, row: dict[str, Any]) -> dict[str, Any]:
         intraday = {
@@ -272,10 +279,12 @@ class DashboardService:
                 seen.add(code)
                 if len(picks_rows) >= MAX_DASHBOARD_PICKS:
                     break
+        picks_rows = sorted(picks_rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
         reports = await asyncio.gather(*[self._generate_pick_report_with_timeout(market_summary, row) for row in picks_rows]) if picks_rows else []
 
         picks: list[DashboardPickPayload] = []
         for row, report in zip(picks_rows, reports):
+            resolved_grade = infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct"))
             references = row.get("news_items") if isinstance(row.get("news_items"), list) else []
             ai_evidence = row.get("ai_evidence") if isinstance(row.get("ai_evidence"), list) else []
             picks.append(
@@ -284,8 +293,8 @@ class DashboardService:
                     name=str(row.get("stock_name", "")),
                     market=str(row.get("market", "")),
                     sector=self._sector_key(row),
-                    grade=str(row.get("grade", "C")),
-                    base_grade=str(row.get("base_grade", row.get("grade", "C"))),
+                    grade=resolved_grade,
+                    base_grade=resolved_grade,
                     decision_status=str(row.get("decision_status", "WATCH") or "WATCH"),
                     decision_label=decision_status_label(row.get("decision_status", "WATCH")),
                     score_total=safe_int(row.get("score_total")),
@@ -354,8 +363,8 @@ class DashboardService:
             account=account,
         )
 
-    async def get_dashboard(self, refresh_account: bool = False) -> DashboardResponse:
-        if not refresh_account:
+    async def get_dashboard(self, refresh_account: bool = False, force_refresh: bool = False) -> DashboardResponse:
+        if not refresh_account and not force_refresh:
             cached = self.repository.fetch_cached_dashboard()
             if isinstance(cached, dict) and cached and self._cache_is_fresh(cached):
                 try:
