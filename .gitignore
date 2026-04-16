@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# Local caches / vendored deps
+.pydeps/
+.npm-cache/
+
+# Frontend build / deps
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Local runtime/data
+runtime/
+data/
+REBUILD_PLAN.md
+chatgpt.py
+
+# Secrets / local env
+.env
+.env.local
+.env.*.local
+*_appkey.txt
+*_secretkey.txt
+*OauthKey.json
+chatgptOauthKey.json
+*.pem
+*.key
+
+# Logs
+*.log
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
