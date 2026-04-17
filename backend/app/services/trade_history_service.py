@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from batch.runtime_source.providers.kiwoom_client import KiwoomRESTClient, effective_venue, venue_stock_code
+from batch.runtime_source.providers.kiwoom_client import KiwoomRESTClient, effective_venue
 from backend.app.repositories.dashboard_repository import DashboardRepository
 from backend.app.schemas.dashboard import DashboardAccountPayload, DashboardAccountPosition
 from backend.app.schemas.trade_history import TradeHistoryDailyItem, TradeHistoryExecutionItem, TradeHistoryResponse
@@ -59,10 +59,6 @@ def _calc_slippage_bps(order_type: str, order_price: float, filled_price: float)
     return round(((filled_price - order_price) / order_price) * 10000.0, 2)
 
 
-def _signed_abs_int(value: int) -> int:
-    return int(value) if value >= 0 else -int(abs(value))
-
-
 class TradeHistoryService:
     def __init__(self, repository: DashboardRepository | None = None) -> None:
         self.repository = repository or DashboardRepository()
@@ -70,7 +66,8 @@ class TradeHistoryService:
     def _sync_account_snapshot(self, client: KiwoomRESTClient) -> tuple[str, DashboardAccountPayload]:
         account_info = client.request('/api/dostk/acnt', 'ka00001', {}).body
         account_no = str(account_info.get('acctNo', '') or '').strip()
-        snapshot_body = client.request('/api/dostk/acnt', 'kt00018', {'qry_tp': '1', 'dmst_stex_tp': 'KRX'}).body
+        venue, _ = effective_venue()
+        snapshot_body = client.request('/api/dostk/acnt', 'kt00018', {'qry_tp': '1', 'dmst_stex_tp': venue}).body
         positions_raw = snapshot_body.get('acnt_evlt_remn_indv_tot') if isinstance(snapshot_body.get('acnt_evlt_remn_indv_tot'), list) else []
 
         positions_payload: list[dict[str, object]] = []
@@ -114,48 +111,11 @@ class TradeHistoryService:
                     profit_rate=profit_rate,
                 )
             )
-
-        old_total_eval_amt = abs(safe_int(snapshot_body.get('tot_evlt_amt')))
-        old_estimated_assets = abs(safe_int(snapshot_body.get('prsm_dpst_aset_amt')))
-        cash_component = old_estimated_assets - old_total_eval_amt
-        venue, _ = effective_venue()
-        live_updated = False
-
-        for index, position in enumerate(positions_payload):
-            ticker = str(position.get('ticker', '') or '')
-            avg_price = abs(safe_float(position.get('avg_price')))
-            quantity = abs(safe_int(position.get('quantity')))
-            if not ticker or avg_price <= 0 or quantity <= 0:
-                continue
-            try:
-                quote = client.request('/api/dostk/stkinfo', 'ka10001', {'stk_cd': venue_stock_code(ticker, venue)}).body
-            except Exception:
-                continue
-
-            live_price = abs(safe_float(quote.get('cur_prc')))
-            if live_price <= 0:
-                continue
-
-            live_eval_amount = int(round(live_price * quantity))
-            live_profit_amount = _signed_abs_int(live_eval_amount - int(round(avg_price * quantity)))
-            live_profit_rate = round(((live_price - avg_price) / avg_price) * 100.0, 2)
-
-            positions_payload[index]['current_price'] = live_price
-            positions_payload[index]['eval_amount'] = live_eval_amount
-            positions_payload[index]['profit_amount'] = live_profit_amount
-            positions_payload[index]['profit_rate'] = live_profit_rate
-
-            account_positions[index].current_price = live_price
-            account_positions[index].eval_amount = live_eval_amount
-            account_positions[index].profit_amount = live_profit_amount
-            account_positions[index].profit_rate = live_profit_rate
-            live_updated = True
-
         total_purchase_amt = abs(safe_int(snapshot_body.get('tot_pur_amt')))
-        total_eval_amt = sum(abs(safe_int(item.get('eval_amount'))) for item in positions_payload)
-        total_eval_profit = sum(safe_int(item.get('profit_amount')) for item in positions_payload)
-        total_profit_rate = round((total_eval_profit / total_purchase_amt) * 100.0, 2) if total_purchase_amt > 0 else 0.0
-        estimated_assets = max(0, cash_component + total_eval_amt)
+        total_eval_amt = abs(safe_int(snapshot_body.get('tot_evlt_amt')))
+        total_eval_profit = safe_int(snapshot_body.get('tot_evlt_pl'))
+        total_profit_rate = safe_float(snapshot_body.get('tot_prft_rt'))
+        estimated_assets = abs(safe_int(snapshot_body.get('prsm_dpst_aset_amt')))
 
         snapshot_payload = {
             'account_no': account_no,
@@ -193,7 +153,7 @@ class TradeHistoryService:
             total_unfilled_qty=0,
             avg_fill_latency_ms=0.0,
             est_slippage_bps=0.0,
-            note=f'계좌 API 동기화 완료: 계좌 {account_no}, 보유 {len(account_positions)}건, 시세 {venue} 기준{"(실시간 반영)" if live_updated else ""}',
+            note=f'계좌 API 동기화 완료: 계좌 {account_no}, 보유 {len(account_positions)}건, 시세 {venue} 기준(직접응답)',
             positions=account_positions,
         )
         return account_no, account
