@@ -174,6 +174,23 @@ class SignalGenerator:
         if not signals:
             return
         top_k = min(len(signals), self.max_overall_ai_calls)
+        # Align overall AI targets with the same score-driven shortlist the UI highlights.
+        initial_order = {id(sig): idx for idx, sig in enumerate(signals)}
+        ai_candidates = [
+            sig for sig in signals
+            if str(sig.ai_overall.get("base_grade", _grade_value(sig.grade)) or _grade_value(sig.grade)).upper() in {"S", "A", "B"}
+        ]
+        ai_target_ids = {
+            id(sig)
+            for sig in sorted(
+                ai_candidates,
+                key=lambda sig: (
+                    -int(sig.score.total or 0),
+                    initial_order[id(sig)],
+                    -int(sig.trading_value or 0),
+                ),
+            )[:top_k]
+        }
         if top_k <= 0:
             for sig in signals:
                 metrics = {
@@ -286,7 +303,7 @@ class SignalGenerator:
             metrics["fresh_news_count"] = len(news_items)
             metrics["news_window_label"] = str(sig.ai_overall.get("news_window_label", "") or "") if isinstance(sig.ai_overall, dict) else ""
 
-            if idx >= top_k:
+            if id(sig) not in ai_target_ids:
                 fallback = self.llm_analyzer.build_rule_based_overall(
                     stock_name=sig.stock_name,
                     rule_scores=rule_scores,
