@@ -1,0 +1,63 @@
+/* Design Ref: Design §2 — CSS Variables 디자인 토큰 */
+/* 모든 색상/타이포/간격 토큰의 단일 진입점. Tailwind는 이 토큰을 참조. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surface */
+  --bg-base: #0b0f17;
+  --bg-surface: #121826;
+  --bg-elevated: #1a2236;
+  --bg-row-hover: #172035;
+
+  /* Border */
+  --border-subtle: #1f2a40;
+  --border-default: #2a3652;
+  --border-strong: #3d4d72;
+
+  /* Text */
+  --text-primary: #e7ecf5;
+  --text-secondary: #9aa6bd;
+  --text-muted: #5d6a82;
+  --text-disabled: #3d4a62;
+
+  /* Korean market: red = up, blue = down */
+  --accent-up: #ff4d4f;
+  --accent-up-bg: rgba(255, 77, 79, 0.12);
+  --accent-down: #4096ff;
+  --accent-down-bg: rgba(64, 150, 255, 0.12);
+  --accent-flat: #9ca3af;
+
+  /* Interaction */
+  --accent-brand: #3b82f6;
+  --accent-brand-hover: #2563eb;
+  --accent-focus: #60a5fa;
+
+  /* Status */
+  --accent-success: #22c55e;
+  --accent-warn: #fbbf24;
+  --accent-danger: #ef4444;
+  --accent-info: #38bdf8;
+
+  /* Grade */
+  --grade-a: #f87171;
+  --grade-b: #fb923c;
+  --grade-c: #facc15;
+  --grade-d: #94a3b8;
+
+  /* Typography */
+  --font-ui:
+    'Pretendard Variable', Pretendard, 'Inter', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'Noto Sans KR', sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Shadows */
+  --shadow-card: 0 0 0 1px var(--border-subtle);
+  --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-default);
+}

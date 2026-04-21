@@ -1,8 +1,12 @@
 import React from 'react';
+import clsx from 'clsx';
+import { RefreshCw, Play, Eye, FileText, Loader2 } from 'lucide-react';
 import type { BatchTaskItem, RunAllState } from '../../types/api';
-import { fmtDateTime, fmtNumber } from '../../app/formatters';
+import { fmtDateTime, fmtCount } from '../../app/formatters';
+import { Badge, type BadgeVariant } from '../ui/Badge';
 
-// 이 컴포넌트는 Data Status 화면 카드 목록을 렌더링한다.
+// Design Ref: Design §4.6 — 배치 상태 그리드 뷰.
+
 interface BatchStatusViewProps {
   loading: boolean;
   tasks: BatchTaskItem[];
@@ -16,78 +20,214 @@ interface BatchStatusViewProps {
   onOpenLogs: (taskId: string) => void;
 }
 
-export function BatchStatusView(props: BatchStatusViewProps) {
-  const { loading, tasks, source, runAll, onRefresh, onChangeSource, onRunTask, onRunAll, onOpenPreview, onOpenLogs } = props;
-  const skeletonCards = Array.from({ length: 6 }, (_, index) => index);
+function statusVariant(status: string): BadgeVariant {
+  const s = (status || '').toUpperCase();
+  if (s === 'OK' || s === 'SUCCESS') return 'success';
+  if (s === 'ERROR' || s === 'FAILED') return 'danger';
+  if (s === 'RUNNING') return 'info';
+  if (s === 'WARN' || s === 'WARNING') return 'warn';
+  return 'neutral';
+}
+
+function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[11px] text-text-muted">{label}</span>
+      <span className="num text-xs text-text-primary truncate max-w-[65%] text-right">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+export function BatchStatusView({
+  loading,
+  tasks,
+  source,
+  runAll,
+  onRefresh,
+  onChangeSource,
+  onRunTask,
+  onRunAll,
+  onOpenPreview,
+  onOpenLogs,
+}: BatchStatusViewProps) {
+  const skeletonCount = 6;
+  const isSkeletonMode = loading && tasks.length === 0;
+
+  const buttonCls =
+    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
   return (
-    <section>
-      <div className="toolbar">
-        <div className="toolbar-left">
-          <button className="primary-button" onClick={onRunAll} disabled={runAll.running}>
+    <section className="flex flex-col gap-3">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onRunAll}
+            disabled={runAll.running}
+            className={clsx(buttonCls, 'bg-brand hover:bg-brand-hover border-brand text-white')}
+          >
+            {runAll.running ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Play size={12} />
+            )}
             Run All
           </button>
-          <button className="ghost-button" onClick={onRefresh}>
-            Refresh Status
+          <button
+            onClick={onRefresh}
+            className={clsx(
+              buttonCls,
+              'border-border bg-surface text-text-primary hover:bg-elevated',
+            )}
+          >
+            <RefreshCw size={12} />
+            Refresh
           </button>
-          <div className="source-toggle" role="radiogroup" aria-label="collector source">
-            <button
-              className={source === 'naver' ? 'tag tag-success' : 'tag'}
-              onClick={() => onChangeSource('naver')}
-            >
-              Naver
-            </button>
-            <button
-              className={source === 'kiwoom' ? 'tag tag-success' : 'tag'}
-              onClick={() => onChangeSource('kiwoom')}
-            >
-              Kiwoom API
-            </button>
+          <div
+            role="radiogroup"
+            aria-label="collector source"
+            className="inline-flex items-center rounded-md border border-border-subtle bg-base p-0.5"
+          >
+            {(['naver', 'kiwoom'] as const).map((key) => (
+              <button
+                key={key}
+                role="radio"
+                aria-checked={source === key}
+                onClick={() => onChangeSource(key)}
+                className={clsx(
+                  'px-2.5 py-1 rounded-sm text-xs transition-colors',
+                  source === key
+                    ? 'bg-elevated text-text-primary font-medium'
+                    : 'text-text-secondary hover:text-text-primary',
+                )}
+              >
+                {key === 'naver' ? 'Naver' : 'Kiwoom API'}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="toolbar-right">
-          <span className={runAll.status === 'OK' ? 'tag tag-success' : runAll.status === 'ERROR' ? 'tag tag-danger' : 'tag'}>
-            RunAll: {runAll.status}
-          </span>
-          {runAll.current_task ? <span className="muted-text">Running: {runAll.current_task}</span> : null}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-text-muted">RunAll</span>
+          <Badge
+            variant={
+              runAll.status === 'OK'
+                ? 'success'
+                : runAll.status === 'ERROR'
+                  ? 'danger'
+                  : runAll.status === 'RUNNING'
+                    ? 'info'
+                    : 'neutral'
+            }
+            size="xs"
+          >
+            {runAll.status}
+          </Badge>
+          {runAll.current_task ? (
+            <span className="text-text-muted">
+              Running: <span className="num text-text-secondary">{runAll.current_task}</span>
+            </span>
+          ) : null}
         </div>
       </div>
 
-      <div className="card-grid">
-        {(loading && tasks.length === 0 ? skeletonCards : tasks).map((task, index) => {
-          if (typeof task === 'number') {
-            return <div key={`skeleton-${index}`} className="card-panel skeleton-card" />;
-          }
-          const sourceLabel = task.supported_sources.includes('kiwoom') ? task.effective_source.toUpperCase() : 'NAVER';
-          return (
-            <article className="card-panel batch-card" key={task.id}>
-              <div className="batch-head">
-                <div>
-                  <div className="batch-title">{task.title}</div>
-                  <div className="batch-group">{task.group}</div>
-                </div>
-                <span className={task.status === 'OK' ? 'tag tag-success' : task.status === 'ERROR' ? 'tag tag-danger' : 'tag'}>
-                  {task.status}
-                </span>
-              </div>
-              <div className="batch-path">{task.output_target}</div>
-              <div className="batch-source-line">Source: {sourceLabel}</div>
-              <div className="meta-list">
-                <div><span>Updated</span><strong>{fmtDateTime(task.updated_at)}</strong></div>
-                <div><span>Last Updated</span><strong>{task.updated_ago}</strong></div>
-                <div><span>Records</span><strong>{fmtNumber(task.records)}</strong></div>
-                <div><span>Run Date</span><strong>{task.run_date || '-'}</strong></div>
-                <div><span>Input Max</span><strong>{task.reference_data_time || '-'}</strong></div>
-              </div>
-              <div className="button-row">
-                <button className="ghost-button" disabled={task.running} onClick={() => onRunTask(task.id)}>Update</button>
-                <button className="ghost-button" onClick={() => onOpenPreview(task.id)}>View</button>
-                <button className="ghost-button" onClick={() => onOpenLogs(task.id)}>Logs</button>
-              </div>
-            </article>
-          );
-        })}
+      {/* Grid */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
+        {isSkeletonMode
+          ? Array.from({ length: skeletonCount }).map((_, index) => (
+              <div
+                key={`skeleton-${index}`}
+                className="rounded-md border border-border-subtle bg-surface p-3 h-[180px] animate-pulse"
+              />
+            ))
+          : tasks.map((task) => {
+              const sourceLabel = task.supported_sources.includes('kiwoom')
+                ? task.effective_source.toUpperCase()
+                : 'NAVER';
+              const isRunning = task.running || runAll.current_task === task.id;
+              return (
+                <article
+                  key={task.id}
+                  className={clsx(
+                    'rounded-md border bg-surface p-3 flex flex-col gap-2',
+                    isRunning
+                      ? 'border-info/40 shadow-[0_0_0_1px_var(--accent-info)]'
+                      : 'border-border-subtle',
+                  )}
+                >
+                  <header className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-text-primary truncate">
+                        {task.title}
+                      </div>
+                      <div className="text-[11px] text-text-muted">{task.group}</div>
+                    </div>
+                    <Badge variant={statusVariant(task.status)} size="xs">
+                      {isRunning ? 'RUNNING' : task.status}
+                    </Badge>
+                  </header>
+                  <div className="num text-[11px] text-text-muted truncate" title={task.output_target}>
+                    {task.output_target}
+                  </div>
+                  <div className="text-[11px] text-text-secondary">
+                    Source: <span className="text-text-primary">{sourceLabel}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5 py-1 border-y border-border-subtle">
+                    <MetaRow label="Updated" value={fmtDateTime(task.updated_at)} />
+                    <MetaRow label="Ago" value={task.updated_ago} />
+                    <MetaRow label="Records" value={fmtCount(task.records)} />
+                    <MetaRow label="Run Date" value={task.run_date || '-'} />
+                    <MetaRow label="Input Max" value={task.reference_data_time || '-'} />
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-auto pt-1">
+                    <button
+                      disabled={isRunning}
+                      onClick={() => onRunTask(task.id)}
+                      className={clsx(
+                        buttonCls,
+                        'border-border bg-surface text-text-primary hover:bg-elevated',
+                      )}
+                    >
+                      {isRunning ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Play size={12} />
+                      )}
+                      Update
+                    </button>
+                    <button
+                      onClick={() => onOpenPreview(task.id)}
+                      className={clsx(
+                        buttonCls,
+                        'border-border-subtle bg-base text-text-secondary hover:bg-elevated hover:text-text-primary',
+                      )}
+                    >
+                      <Eye size={12} />
+                      View
+                    </button>
+                    <button
+                      onClick={() => onOpenLogs(task.id)}
+                      className={clsx(
+                        buttonCls,
+                        'border-border-subtle bg-base text-text-secondary hover:bg-elevated hover:text-text-primary',
+                      )}
+                    >
+                      <FileText size={12} />
+                      Logs
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
       </div>
+
+      {runAll.error_task || runAll.error_message ? (
+        <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {runAll.error_task ? <span className="num">[{runAll.error_task}] </span> : null}
+          {runAll.error_message}
+        </div>
+      ) : null}
     </section>
   );
 }

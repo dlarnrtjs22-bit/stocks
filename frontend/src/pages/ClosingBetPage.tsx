@@ -1,8 +1,11 @@
 import React from 'react';
 import { BasisPanel } from '../components/common/BasisPanel';
 import { ClosingView } from '../components/closing/ClosingView';
+import { KpiStat } from '../components/ui/KpiStat';
+import { Num } from '../components/ui/Num';
 import type { ClosingBetResponse } from '../types/api';
 
+// Design Ref: Design §4.3 — 종가배팅 페이지 상단 KPI + Basis + View.
 
 function dataStatusLabel(value?: string | null): string {
   const code = String(value || '').toUpperCase();
@@ -11,7 +14,6 @@ function dataStatusLabel(value?: string | null): string {
   return value || '-';
 }
 
-// 이 페이지는 종가배팅 화면 상단 KPI 와 본문을 그린다.
 interface ClosingBetPageProps {
   loading: boolean;
   data?: ClosingBetResponse | null;
@@ -20,12 +22,36 @@ interface ClosingBetPageProps {
 
 export function ClosingBetPage({ loading, data, onPageChange }: ClosingBetPageProps) {
   return (
-    <div className="section-stack">
-      <div className="metric-box-row four">
-        <div className="metric-box"><div className="metric-label">전체 후보</div><div className="metric-value">{data?.candidates_count ?? 0}</div></div>
-        <div className="metric-box"><div className="metric-label">매수 가능 시그널</div><div className="metric-value">{data?.buyable_signals_count ?? data?.signals_count ?? 0}</div></div>
-        <div className="metric-box"><div className="metric-label">핵심 관찰 종목</div><div className="metric-value">{data?.featured_count ?? data?.featured_items?.length ?? 0}</div></div>
-        <div className="metric-box"><div className="metric-label">데이터 상태</div><div className="metric-value">{dataStatusLabel(data?.status)}</div></div>
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-4 gap-3">
+        <KpiStat
+          label="전체 후보"
+          value={<Num value={data?.candidates_count ?? 0} format="count" tone="neutral" />}
+        />
+        <KpiStat
+          label="매수 가능 시그널"
+          value={
+            <Num
+              value={data?.buyable_signals_count ?? data?.signals_count ?? 0}
+              format="count"
+              tone="neutral"
+            />
+          }
+        />
+        <KpiStat
+          label="핵심 관찰 종목"
+          value={
+            <Num
+              value={data?.featured_count ?? data?.featured_items?.length ?? 0}
+              format="count"
+              tone="neutral"
+            />
+          }
+        />
+        <KpiStat
+          label="데이터 상태"
+          value={<span className="text-base font-semibold">{dataStatusLabel(data?.status)}</span>}
+        />
       </div>
       <BasisPanel basis={data?.basis} />
       <ClosingView loading={loading} data={data} onPageChange={onPageChange} />

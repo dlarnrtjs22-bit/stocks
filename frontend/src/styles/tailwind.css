@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design Ref: Design §2 — 전역 기본값 */
+@layer base {
+  html,
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 18px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* 모든 숫자 tabular-nums 기본 활성화는 font-mono 컴포넌트에 적용 */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 스크롤바 (webkit) */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: var(--radius-md);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+
+  /* 포커스 링 */
+  :focus-visible {
+    outline: 2px solid var(--accent-focus);
+    outline-offset: 2px;
+  }
+
+  /* 언스타일드 폼 컨트롤 기본값 — App.tsx 레거시 toolbar의 input/select에 적용.
+     M5-M9 이행 중에는 필요. M10에서 필요시 축소. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+    min-height: 32px;
+  }
+
+  input[type='date'] {
+    color-scheme: dark;
+  }
+
+  select {
+    cursor: pointer;
+  }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* 자주 사용하는 숫자 블록 — tabular + mono */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}

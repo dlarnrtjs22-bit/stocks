@@ -381,9 +381,7 @@ export function App() {
           loading={contentLoading}
           data={dashboardData}
           onRefresh={() => refreshDashboard(true)}
-          onRefreshAccount={() => undefined}
           dashboardRefreshing={dashboardRefreshing}
-          accountRefreshing={false}
         />
       ) : null}
 

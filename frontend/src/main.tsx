@@ -1,10 +1,12 @@
-﻿import React from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import { App } from './app/App';
+// Design Ref: Design §2 — 스타일 import 순서는 tokens → tailwind → legacy app.css
+import './styles/tokens.css';
+import './styles/tailwind.css';
 import './styles/app.css';
 
-// 이 파일은 React 앱의 실제 시작점이다.
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

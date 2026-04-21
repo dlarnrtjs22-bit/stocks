@@ -1,9 +1,16 @@
-﻿import React from 'react';
+import React from 'react';
+import clsx from 'clsx';
+import { RefreshCw } from 'lucide-react';
 import type { PerformanceRefreshResponse, PerformanceResponse } from '../../types/api';
-import { fmtSignedPercent, fmtTimeHm } from '../../app/formatters';
+import { Panel } from '../ui/Panel';
+import { KpiStat } from '../ui/KpiStat';
+import { Num } from '../ui/Num';
 import { Pager } from '../common/Pager';
+import { GradeSummaryTable } from './GradeSummaryTable';
+import { PerformanceTradeTable } from './PerformanceTradeTable';
 
-// 이 컴포넌트는 누적 성과 요약과 테이블을 렌더링한다.
+// Design Ref: Design §4.4 — KPI 스트립 + 등급 테이블 + 메인 테이블.
+
 interface PerformanceViewProps {
   loading: boolean;
   data?: PerformanceResponse | null;
@@ -13,99 +20,138 @@ interface PerformanceViewProps {
   refreshInfo?: PerformanceRefreshResponse | null;
 }
 
-export function PerformanceView({ loading, data, onPageChange, onQuickRefresh, quickRefreshing, refreshInfo }: PerformanceViewProps) {
+export function PerformanceView({
+  loading,
+  data,
+  onPageChange,
+  onQuickRefresh,
+  quickRefreshing,
+  refreshInfo,
+}: PerformanceViewProps) {
   if (loading && !data) {
-    return <div className="card-panel">누적 성과 데이터를 불러오는 중입니다.</div>;
+    return (
+      <Panel tone="default">
+        <div className="text-text-secondary text-sm">누적 성과 데이터를 불러오는 중입니다.</div>
+      </Panel>
+    );
   }
   if (!data) {
-    return <div className="card-panel">데이터 없음</div>;
+    return (
+      <Panel tone="default">
+        <div className="text-text-secondary text-sm">데이터 없음</div>
+      </Panel>
+    );
   }
 
-  const formatPrice = (value?: number | null) => (value ? value.toLocaleString('ko-KR') : '-');
-  const formatRoi = (value?: number | null) => (value === null || value === undefined ? '-' : fmtSignedPercent(value));
-  const formatOutcome = (value: string) => (value === 'WIN' ? 'Win' : value === 'LOSS' ? 'Loss' : 'Open');
-  const betterLabel = data.comparison.better_slot === '08'
-    ? '08시 NXT 우세'
-    : data.comparison.better_slot === '09'
-      ? '09시 정규장 우세'
-      : '동률/평가대기';
+  const betterLabel =
+    data.comparison.better_slot === '08'
+      ? '08시 NXT 우세'
+      : data.comparison.better_slot === '09'
+        ? '09시 정규장 우세'
+        : '동률/평가대기';
+  const betterTone: 'up' | 'down' | 'default' =
+    data.comparison.better_slot === '08'
+      ? 'up'
+      : data.comparison.better_slot === '09'
+        ? 'down'
+        : 'default';
   const isRolling7d = data.basis?.request_date === 'latest(7d)';
 
   return (
-    <section className="section-stack">
+    <div className="flex flex-col gap-3">
       {isRolling7d ? (
-        <div className="inline-status">누적 성과 기본 조회는 금일 포함 최근 7거래일 기준입니다.</div>
+        <div className="rounded-md border border-border-subtle bg-surface px-3 py-1.5 text-xs text-text-secondary">
+          누적 성과 기본 조회는 금일 포함 최근 7거래일 기준입니다.
+        </div>
       ) : null}
-      <div className="metric-box-row four">
-        <div className="metric-box"><div className="metric-label">TOTAL SIGNALS</div><div className="metric-value">{data.summary.total_signals}</div></div>
-        <div className="metric-box"><div className="metric-label">08시 NXT 승률</div><div className="metric-value">{data.summary_08.win_rate}%</div><div className="muted-text">W/L {data.summary_08.wins}/{data.summary_08.losses} / 평균 {fmtSignedPercent(data.summary_08.avg_roi)}</div></div>
-        <div className="metric-box"><div className="metric-label">09시 정규장 승률</div><div className="metric-value">{data.summary_09.win_rate}%</div><div className="muted-text">W/L {data.summary_09.wins}/{data.summary_09.losses} / 평균 {fmtSignedPercent(data.summary_09.avg_roi)}</div></div>
-        <div className="metric-box"><div className="metric-label">비교</div><div className="metric-value small">{betterLabel}</div><div className="muted-text">승률 차이 {data.comparison.edge_pct}%p</div></div>
+
+      {/* KPI Strip */}
+      <div className="grid grid-cols-4 gap-3">
+        <KpiStat
+          label="Total Signals"
+          value={<span className="num">{data.summary.total_signals}</span>}
+        />
+        <KpiStat
+          label="08시 NXT 승률"
+          value={<span className="num">{data.summary_08.win_rate}%</span>}
+          delta={
+            <>
+              W/L <span className="num">{data.summary_08.wins}/{data.summary_08.losses}</span>
+              {' · 평균 '}
+              <Num value={data.summary_08.avg_roi} format="signed-percent" className="inline" />
+            </>
+          }
+        />
+        <KpiStat
+          label="09시 정규장 승률"
+          value={<span className="num">{data.summary_09.win_rate}%</span>}
+          delta={
+            <>
+              W/L <span className="num">{data.summary_09.wins}/{data.summary_09.losses}</span>
+              {' · 평균 '}
+              <Num value={data.summary_09.avg_roi} format="signed-percent" className="inline" />
+            </>
+          }
+        />
+        <KpiStat
+          label="비교 (Edge)"
+          tone={betterTone}
+          value={<span className="text-base font-semibold">{betterLabel}</span>}
+          delta={
+            <>
+              승률 차이 <span className="num">{data.comparison.edge_pct}%p</span>
+            </>
+          }
+        />
       </div>
-      <div className="card-panel">
-        <div className="section-title">등급별 성과: 08시 / 09시 비교</div>
-        <div className="grade-summary-grid">
-          {data.grade_summary.map((item) => (
-            <div className="metric-box" key={item.grade}>
-              <div className="metric-label">{item.grade} Grade</div>
-              <div className="metric-value">{item.count}</div>
-              <div className="muted-text">08시 {item.win_rate_08}% / {fmtSignedPercent(item.avg_roi_08)} / W/L {item.wl_08}</div>
-              <div className="muted-text">09시 {item.win_rate_09}% / {fmtSignedPercent(item.avg_roi_09)} / W/L {item.wl_09}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="card-panel table-panel">
-        <div className="section-head-row">
-          <div className="section-title">거래 내역: 추천가 대비 다음 거래일 08시/09시 평가</div>
-          <button className="primary-button compact-button" onClick={onQuickRefresh} disabled={quickRefreshing}>
-            {quickRefreshing ? '비교값 갱신 중...' : '비교값 빠른갱신'}
+
+      {/* Grade Summary */}
+      <Panel
+        tone="default"
+        padding="none"
+        title="등급별 성과"
+        subtitle="08시 / 09시 비교"
+      >
+        <GradeSummaryTable items={data.grade_summary} />
+      </Panel>
+
+      {/* Main Trade Table */}
+      <Panel
+        tone="default"
+        padding="none"
+        title="거래 내역"
+        subtitle="추천가 대비 다음 거래일 08시/09시 평가"
+        action={
+          <button
+            onClick={onQuickRefresh}
+            disabled={quickRefreshing}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+              'bg-brand hover:bg-brand-hover text-white',
+              quickRefreshing && 'opacity-60 cursor-not-allowed',
+            )}
+          >
+            <RefreshCw size={12} className={clsx(quickRefreshing && 'animate-spin')} />
+            {quickRefreshing ? '갱신 중' : '비교값 빠른갱신'}
           </button>
-        </div>
+        }
+      >
         {refreshInfo ? (
-          <div className="inline-status">
-            {refreshInfo.message} 08시 갱신 {refreshInfo.refreshed_08}건 / 09시 갱신 {refreshInfo.refreshed_09}건 / 추적 {refreshInfo.tracked_count}종목
+          <div className="border-b border-border-subtle bg-base px-3 py-2 text-xs text-text-secondary">
+            {refreshInfo.message} · 08시 갱신{' '}
+            <span className="num">{refreshInfo.refreshed_08}</span>건 · 09시 갱신{' '}
+            <span className="num">{refreshInfo.refreshed_09}</span>건 · 추적{' '}
+            <span className="num">{refreshInfo.tracked_count}</span>종목
           </div>
         ) : null}
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>등급</th>
-              <th>종목명</th>
-              <th>티커</th>
-              <th>진입가</th>
-              <th>매수일</th>
-              <th>평가일</th>
-              <th>08시 NXT</th>
-              <th>08시 손익률</th>
-              <th>09시 정규장</th>
-              <th>09시 손익률</th>
-              <th>점수</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.trades.map((trade) => (
-              <tr key={trade.key}>
-                <td>{trade.grade}</td>
-                <td>{trade.name}</td>
-                <td>{trade.ticker}</td>
-                <td>
-                  <div>{trade.entry.toLocaleString('ko-KR')}</div>
-                  <div className="muted-text">{trade.entry_time ? `${fmtTimeHm(trade.entry_time)} 기준` : '-'}</div>
-                </td>
-                <td>{trade.buy_date ?? trade.date}</td>
-                <td>{trade.eval_date ?? '-'}</td>
-                <td>{formatPrice(trade.eval_08_price)} <span className={`outcome-pill ${trade.outcome_08.toLowerCase()}`}>{formatOutcome(trade.outcome_08)}</span></td>
-                <td>{formatRoi(trade.roi_08)}</td>
-                <td>{formatPrice(trade.eval_09_price)} <span className={`outcome-pill ${trade.outcome_09.toLowerCase()}`}>{formatOutcome(trade.outcome_09)}</span></td>
-                <td>{formatRoi(trade.roi_09)}</td>
-                <td>{trade.score}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <Pager page={data.pagination.page} totalPages={data.pagination.total_pages} onChange={onPageChange} />
-    </section>
+        <PerformanceTradeTable trades={data.trades} />
+      </Panel>
+
+      <Pager
+        page={data.pagination.page}
+        totalPages={data.pagination.total_pages}
+        onChange={onPageChange}
+      />
+    </div>
   );
 }
