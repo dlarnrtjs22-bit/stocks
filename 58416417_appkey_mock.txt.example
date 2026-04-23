@@ -1,0 +1,3 @@
+# 모의투자 appkey를 이 파일 이름에서 '.example'를 지우고 붙여넣으세요:
+# mv 58416417_appkey_mock.txt.example 58416417_appkey_mock.txt
+# 키 발급: openapi.kiwoom.com 로그인 -> 모의투자 신청 -> 전용 appkey/secretkey 수령

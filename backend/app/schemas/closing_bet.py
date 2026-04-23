@@ -74,6 +74,10 @@ class ClosingBetItem(BaseModel):
     market_status_label: str = ''
     external_market_status_label: str = ''
     chart_url: str = ''
+    # Design Ref: Design §4.1 Module A — NXT 가능 여부 및 권장 매매 시점/주문유형
+    nxt_eligible: bool = False
+    recommended_window: str | None = None
+    recommended_order_type: str | None = None
 
 
 # 이 모델은 페이지네이션 정보를 표현한다.

@@ -7,13 +7,15 @@ import { Badge, type BadgeVariant } from '../ui/Badge';
 
 // Design Ref: Design §4.6 — 배치 상태 그리드 뷰.
 
+// Design Ref: Design §10.2 — Phase H 라디오 선택 제거, 각 배치 카드 메타로 대체
 interface BatchStatusViewProps {
   loading: boolean;
   tasks: BatchTaskItem[];
   source: string;
   runAll: RunAllState;
   onRefresh: () => void;
-  onChangeSource: (source: string) => void;
+  // Deprecated but retained for backward compatibility (App.tsx still passes it)
+  onChangeSource?: (source: string) => void;
   onRunTask: (taskId: string) => void;
   onRunAll: () => void;
   onOpenPreview: (taskId: string) => void;
@@ -46,7 +48,6 @@ export function BatchStatusView({
   source,
   runAll,
   onRefresh,
-  onChangeSource,
   onRunTask,
   onRunAll,
   onOpenPreview,
@@ -85,27 +86,12 @@ export function BatchStatusView({
             <RefreshCw size={12} />
             Refresh
           </button>
-          <div
-            role="radiogroup"
-            aria-label="collector source"
-            className="inline-flex items-center rounded-md border border-border-subtle bg-base p-0.5"
-          >
-            {(['naver', 'kiwoom'] as const).map((key) => (
-              <button
-                key={key}
-                role="radio"
-                aria-checked={source === key}
-                onClick={() => onChangeSource(key)}
-                className={clsx(
-                  'px-2.5 py-1 rounded-sm text-xs transition-colors',
-                  source === key
-                    ? 'bg-elevated text-text-primary font-medium'
-                    : 'text-text-secondary hover:text-text-primary',
-                )}
-              >
-                {key === 'naver' ? 'Naver' : 'Kiwoom API'}
-              </button>
-            ))}
+          {/* Design Ref: Design §10.2 — 라디오 제거, 활성 소스는 읽기전용 배지 */}
+          <div className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-base px-2.5 py-1 text-xs">
+            <span className="text-text-muted">Active Source</span>
+            <span className="text-text-primary font-medium uppercase num">
+              {source || 'kiwoom'}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs">
@@ -142,9 +128,15 @@ export function BatchStatusView({
               />
             ))
           : tasks.map((task) => {
-              const sourceLabel = task.supported_sources.includes('kiwoom')
-                ? task.effective_source.toUpperCase()
-                : 'NAVER';
+              // 다음 실행 때 쓸 소스 = active source가 지원되면 active, 아니면 default
+              const activeLower = (source || 'kiwoom').toLowerCase();
+              const resolvedSource = task.supported_sources.includes(activeLower)
+                ? activeLower
+                : (task.supported_sources[0] || 'naver');
+              const sourceLabel = resolvedSource.toUpperCase();
+              const lastRunSource = (task.effective_source || '').toLowerCase();
+              const showDivergence = lastRunSource && lastRunSource !== resolvedSource;
+              const onlyNaver = task.supported_sources.length === 1 && task.supported_sources[0] === 'naver';
               const isRunning = task.running || runAll.current_task === task.id;
               return (
                 <article
@@ -170,8 +162,16 @@ export function BatchStatusView({
                   <div className="num text-[11px] text-text-muted truncate" title={task.output_target}>
                     {task.output_target}
                   </div>
-                  <div className="text-[11px] text-text-secondary">
-                    Source: <span className="text-text-primary">{sourceLabel}</span>
+                  <div className="text-[11px] text-text-secondary flex items-center gap-1.5 flex-wrap">
+                    <span>Source:</span>
+                    <span className="text-text-primary font-medium">{sourceLabel}</span>
+                    {onlyNaver ? (
+                      <span className="text-[10px] text-text-muted">(뉴스전용 · 키움 미지원)</span>
+                    ) : showDivergence ? (
+                      <span className="text-[10px] text-warn">
+                        (last run: {lastRunSource.toUpperCase()})
+                      </span>
+                    ) : null}
                   </div>
                   <div className="flex flex-col gap-0.5 py-1 border-y border-border-subtle">
                     <MetaRow label="Updated" value={fmtDateTime(task.updated_at)} />

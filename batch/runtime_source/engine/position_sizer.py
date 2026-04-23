@@ -23,8 +23,16 @@ class PositionSizer:
 
     def calculate(self, price: float, grade: Grade) -> PositionPlan:
         entry = float(price)
-        stop = round(entry * (1.0 - self.config.stop_loss_pct), 2)
-        target = round(entry * (1.0 + self.config.take_profit_pct), 2)
+        # Design Ref: Design §5 Module B — trader_style에 따라 손절/익절 폭 선택
+        style = str(getattr(self.config, "trader_style", "default") or "default").lower()
+        if style == "scalper":
+            stop_pct = float(getattr(self.config, "scalper_stop_loss_pct", self.config.stop_loss_pct))
+            target_pct = float(getattr(self.config, "scalper_take_profit_pct", self.config.take_profit_pct))
+        else:
+            stop_pct = self.config.stop_loss_pct
+            target_pct = self.config.take_profit_pct
+        stop = round(entry * (1.0 - stop_pct), 2)
+        target = round(entry * (1.0 + target_pct), 2)
 
         risk_per_share = max(entry - stop, 1e-6)
         r_value = self.capital * self.config.r_ratio

@@ -6,6 +6,7 @@ import {
   Target,
   LineChart,
   Database,
+  Shield,
   type LucideIcon,
 } from 'lucide-react';
 import type { ViewKey } from '../../types/api';
@@ -35,6 +36,7 @@ function todayIso(): string {
 
 const menuItems: MenuItem[] = [
   { key: 'dashboard', title: 'Dashboard', desc: '시장 요약', icon: LayoutDashboard },
+  { key: 'control', title: '자동매매 제어', desc: 'Auto Trade Control', icon: Shield },
   { key: 'trade_history', title: '매매내역', desc: '계좌와 체결', icon: Receipt },
   { key: 'closing', title: '종가배팅', desc: 'Closing Bet', icon: Target },
   { key: 'performance', title: '누적 성과', desc: 'Performance', icon: LineChart },

@@ -106,6 +106,12 @@ class SignalConfig:
     gap_target_pct: float = 0.03      # 갭상승 익절: +3%
     gap_stop_pct: float = -0.02       # 갭하락 손절: -2%
     time_stop_hour: int = 10          # 시간손절: 10시
+
+    # Design Ref: Design §5 Module B — 수급단타왕 스타일(-2% 칼손절) 옵션화
+    # "default" = 기존 -3%/+5%, "scalper" = -2%/+2% (고명환 매매원칙)
+    trader_style: str = "default"
+    scalper_stop_loss_pct: float = 0.02  # 수급단타왕 "-2% 칼손절"
+    scalper_take_profit_pct: float = 0.02  # 수급단타왕 "+2% 이상 이익실현"
     
     # === 리스크 관리 ===
     r_ratio: float = 0.005            # R 비율: 0.5%

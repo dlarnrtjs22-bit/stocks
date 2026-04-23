@@ -1,5 +1,5 @@
 ﻿// 이 파일은 프론트에서 공통으로 사용하는 API 타입을 정의한다.
-export type ViewKey = 'dashboard' | 'trade_history' | 'data_status' | 'closing' | 'performance';
+export type ViewKey = 'dashboard' | 'trade_history' | 'data_status' | 'closing' | 'performance' | 'control';
 
 export interface BasisSourceItem {
   label: string;
@@ -66,6 +66,10 @@ export interface ClosingBetItem {
   market_status_label: string;
   external_market_status_label: string;
   chart_url: string;
+  // Design Ref: Design §4.1 Module A — NXT 가능 여부 + 권장 매매 시점/주문유형
+  nxt_eligible?: boolean;
+  recommended_window?: string | null;
+  recommended_order_type?: string | null;
 }
 
 export interface PaginationPayload {

@@ -4,6 +4,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { DashboardPage } from '../pages/DashboardPage';
 import { DataStatusPage } from '../pages/DataStatusPage';
 import { ClosingBetPage } from '../pages/ClosingBetPage';
+import { ControlPage } from '../pages/ControlPage';
 import { PerformancePage } from '../pages/PerformancePage';
 import { TradeHistoryPage } from '../pages/TradeHistoryPage';
 import type {
@@ -47,7 +48,9 @@ function autoRefreshMs(value: string) {
 export function App() {
   const initialRange = defaultRange();
   const [view, setView] = useState<ViewKey>('dashboard');
-  const [batchSource, setBatchSource] = useState('naver');
+  // Design Ref: Design §10.2 — Phase H 배치 재작성, 키움 단일화
+  // 'kiwoom' 이 기본. 네이버는 뉴스 fallback 전용으로 격하되어 라디오 UI 제거됨.
+  const [batchSource, setBatchSource] = useState('kiwoom');
   const [dates, setDates] = useState<DateListResponse>({ dates: [], latest: null });
   const [selectedDate, setSelectedDate] = useState('latest');
   const [tradeDateFrom, setTradeDateFrom] = useState(initialRange.from);
@@ -89,6 +92,7 @@ export function App() {
     if (view === 'trade_history') return '매매내역';
     if (view === 'data_status') return 'Data Status';
     if (view === 'closing') return 'Closing Bet V2';
+    if (view === 'control') return '자동매매 제어';
     return '누적 성과';
   }, [view]);
 
@@ -97,6 +101,7 @@ export function App() {
     if (view === 'trade_history') return '보유 종목과 실제 체결내역, 기간별 손익을 계좌 기준으로 조회합니다.';
     if (view === 'data_status') return '배치 상태와 로그를 일반적인 웹페이지처럼 조회합니다.';
     if (view === 'closing') return '배치가 끝난 최종 결과만 빠르게 조회합니다.';
+    if (view === 'control') return 'Kill Switch · 실전/모의 전환 · 개별 Job on/off · Top 2 · 브리핑 · 주문이력';
     return '최종 signal 결과를 기반으로 누적 성과를 조회합니다.';
   }, [view]);
 
@@ -414,6 +419,7 @@ export function App() {
         />
       ) : null}
 
+      {view === 'control' ? <ControlPage loading={contentLoading} /> : null}
       {view === 'closing' ? <ClosingBetPage loading={contentLoading} data={closingData} onPageChange={setClosingPage} /> : null}
       {view === 'performance' ? (
         <PerformancePage

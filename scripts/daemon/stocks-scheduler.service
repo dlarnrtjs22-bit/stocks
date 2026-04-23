@@ -1,0 +1,42 @@
+# systemd unit for Linux deployment
+# Design Ref: Design §1.1 - scheduler 데몬 Restart=always
+#
+# 설치:
+#   sudo cp scripts/daemon/stocks-scheduler.service /etc/systemd/system/
+#   # 아래 [Service] 섹션의 경로/사용자 수정 필요
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable stocks-scheduler
+#   sudo systemctl start stocks-scheduler
+#
+# 상태 확인:
+#   sudo systemctl status stocks-scheduler
+#   sudo journalctl -u stocks-scheduler -f
+
+[Unit]
+Description=Stocks Auto-Trade Scheduler (NXT 종가배팅)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stocks
+Group=stocks
+WorkingDirectory=/opt/stocks_new
+Environment="PYTHONPATH=/opt/stocks_new/.pydeps:/opt/stocks_new"
+Environment="PYTHONIOENCODING=utf-8"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/python3 -X utf8 -u -m batch.runtime_source.scheduler
+Restart=always
+RestartSec=15
+StandardOutput=append:/opt/stocks_new/runtime/logs/scheduler.stdout.log
+StandardError=append:/opt/stocks_new/runtime/logs/scheduler.stderr.log
+
+# 보안 옵션
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stocks_new/runtime /opt/stocks_new/.bkit /opt/stocks_new/data
+
+[Install]
+WantedBy=multi-user.target

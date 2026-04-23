@@ -52,6 +52,10 @@ class SupplyData:
     foreign_buy_5d: int = 0
     inst_buy_5d: int = 0
     individual_buy_5d: int = 0
+    # Design Ref: Design §5 Module B — 수급 연속성(수급단타왕 매일매일 매집)
+    # N일 연속 순매수 카운트. 파이프라인에서 채워지지 않으면 0 (기존 동작 유지)
+    continuity_days_foreign: int = 0
+    continuity_days_institution: int = 0
 
 
 @dataclass
@@ -309,6 +313,9 @@ class ScoreDetail:
     leader: int = 0
     intraday: int = 0
     news_attention: int = 0
+    # Design Ref: Design §5 Module B — 수급 연속성 보너스 (최대 1점), 실체성 뉴스 카운트
+    supply_continuity: int = 0
+    material_news_count: int = 0
     llm_reason: str = ""
     llm_meta: Dict[str, Any] = field(default_factory=dict)
     total: int = 0
@@ -321,6 +328,7 @@ class ScoreDetail:
             + self.candle
             + self.consolidation
             + self.supply
+            + self.supply_continuity
             + self.market
             + self.program
             + self.stock_program

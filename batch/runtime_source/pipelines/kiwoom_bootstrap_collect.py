@@ -79,6 +79,138 @@ def _paginate_rows(client: KiwoomRESTClient, path: str, api_id: str, payload: di
     return rows
 
 
+async def _async_paginate_rows(
+    client: "AsyncKiwoomClient",
+    path: str,
+    api_id: str,
+    payload: dict[str, Any],
+    list_key: str,
+    max_pages: int = 4,
+) -> list[dict[str, Any]]:
+    """AsyncKiwoomClient용 paginate. 페이징이 없는 경우 1회만 호출."""
+    rows: list[dict[str, Any]] = []
+    cont_yn = "N"
+    next_key = ""
+    for _ in range(max_pages):
+        res = await client.request(path, api_id, payload, cont_yn=cont_yn, next_key=next_key)
+        items = res.body.get(list_key)
+        if isinstance(items, list):
+            rows.extend([item for item in items if isinstance(item, dict)])
+        cont_yn = str(res.headers.get("cont-yn", "N") or "N").upper()
+        next_key = str(res.headers.get("next-key", "") or "")
+        if cont_yn != "Y" or not next_key:
+            break
+    return rows
+
+
+async def collect_ohlcv_async(repo: SupabaseRepository, limit_per_market: int, concurrency: int = 8) -> pd.DataFrame:
+    """Design Ref: Design §10 Phase H Part 2 — ohlcv 수집 병렬화
+    기존 직렬(200 tickers × 0.22s = 44s+) → asyncio 세마포어=8 → ~6-10초 기대
+    """
+    from providers.kiwoom_client_async import AsyncKiwoomClient
+
+    base_date = date.today().strftime("%Y%m%d")
+    venue, _ = effective_venue()
+    universe = _load_universe(repo, limit_per_market)
+    ticker_meta: list[tuple[str, str, str, int]] = []
+    for _, row in universe.iterrows():
+        ticker = str(row.get("ticker", "")).zfill(6)
+        if not ticker:
+            continue
+        ticker_meta.append((
+            ticker,
+            str(row.get("market", "")).upper(),
+            str(row.get("name", "")),
+            _to_int(row.get("market_cap_eok")),
+        ))
+
+    async with AsyncKiwoomClient(concurrency=concurrency) as client:
+        async def _fetch_one(ticker: str) -> list[dict[str, Any]]:
+            try:
+                return await _async_paginate_rows(
+                    client,
+                    "/api/dostk/chart",
+                    "ka10081",
+                    {"stk_cd": venue_stock_code(ticker, venue), "base_dt": base_date, "upd_stkpc_tp": "1"},
+                    "stk_dt_pole_chart_qry",
+                    max_pages=3,
+                )
+            except Exception:
+                return []
+
+        results = await asyncio.gather(*[_fetch_one(t) for t, _, _, _ in ticker_meta])
+
+    rows: list[dict[str, Any]] = []
+    for (ticker, market, name, marcap), items in zip(ticker_meta, results):
+        for item in items:
+            trade_date = str(item.get("dt", "")).strip()
+            if len(trade_date) != 8:
+                continue
+            rows.append({
+                "date": f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}",
+                "ticker": ticker,
+                "name": name,
+                "market": market,
+                "open": _to_float(item.get("open_pric")),
+                "high": _to_float(item.get("high_pric")),
+                "low": _to_float(item.get("low_pric")),
+                "close": _to_float(item.get("cur_prc")),
+                "volume": _to_int(item.get("trde_qty")),
+                "trading_value": _to_int(item.get("trde_prica")) * 1_000_000,
+                "foreign_retention_rate": 0.0,
+                "market_cap_eok": marcap,
+            })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["date", "ticker"]).sort_values(["ticker", "date"]).reset_index(drop=True)
+
+
+async def collect_flows_async(repo: SupabaseRepository, limit_per_market: int, concurrency: int = 8) -> pd.DataFrame:
+    """Design Ref: Design §10 Phase H Part 2 — flows 병렬 수집"""
+    from providers.kiwoom_client_async import AsyncKiwoomClient
+
+    base_date = date.today().strftime("%Y%m%d")
+    venue, _ = effective_venue()
+    universe = _load_universe(repo, limit_per_market)
+    tickers = [str(row.get("ticker", "")).zfill(6) for _, row in universe.iterrows() if str(row.get("ticker", "")).zfill(6)]
+
+    async with AsyncKiwoomClient(concurrency=concurrency) as client:
+        async def _fetch_one(ticker: str) -> list[dict[str, Any]]:
+            try:
+                return await _async_paginate_rows(
+                    client,
+                    "/api/dostk/chart",
+                    "ka10060",
+                    {"dt": base_date, "stk_cd": venue_stock_code(ticker, venue), "amt_qty_tp": "2", "trde_tp": "0", "unit_tp": "1"},
+                    "stk_invsr_orgn_chart",
+                    max_pages=2,
+                )
+            except Exception:
+                return []
+
+        results = await asyncio.gather(*[_fetch_one(t) for t in tickers])
+
+    rows: list[dict[str, Any]] = []
+    for ticker, items in zip(tickers, results):
+        for item in items:
+            trade_date = str(item.get("dt", "")).strip()
+            if len(trade_date) != 8:
+                continue
+            foreign = _to_int(item.get("frgnr_invsr"))
+            inst = _to_int(item.get("orgn"))
+            individual = _to_int(item.get("ind_invsr"))
+            rows.append({
+                "date": f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}",
+                "ticker": ticker,
+                "foreign_net_buy": foreign,
+                "inst_net_buy": inst,
+                "retail_net_buy": individual if individual else -(foreign + inst),
+            })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["date", "ticker"]).sort_values(["ticker", "date"]).reset_index(drop=True)
+
+
 def collect_ohlcv(repo: SupabaseRepository, client: KiwoomRESTClient, limit_per_market: int) -> pd.DataFrame:
     base_date = date.today().strftime("%Y%m%d")
     venue, _ = effective_venue()
@@ -584,19 +716,36 @@ def main() -> None:
     ohlcv = pd.DataFrame()
     intraday = pd.DataFrame()
 
+    # Design Ref: Design §10 Phase H Part 2 — env KIWOOM_ASYNC=1 로 병렬화 opt-in
+    # 기본값은 sync (backward compat). async 경로가 안정화된 뒤 default 전환.
+    async_enabled = str(os.getenv("KIWOOM_ASYNC", "")).strip() in {"1", "true", "yes"}
+    async_concurrency = max(1, min(32, int(os.getenv("KIWOOM_ASYNC_CONCURRENCY", "8") or 8)))
+    if async_enabled:
+        print(f"[kiwoom] ASYNC MODE enabled (concurrency={async_concurrency})")
+
     if "ohlcv" in steps:
         print("[kiwoom] ohlcv collecting...")
-        ohlcv = collect_ohlcv(repo, rest, args.limit_per_market)
+        import time as _t
+        _s = _t.time()
+        if async_enabled:
+            ohlcv = asyncio.run(collect_ohlcv_async(repo, args.limit_per_market, concurrency=async_concurrency))
+        else:
+            ohlcv = collect_ohlcv(repo, rest, args.limit_per_market)
         if not ohlcv.empty:
             repo.upsert_ohlcv(ohlcv)
-            print(f"  ohlcv rows: {len(ohlcv)}")
+            print(f"  ohlcv rows: {len(ohlcv)}  ({_t.time()-_s:.1f}s)")
 
     if "flows" in steps:
         print("[kiwoom] flows collecting...")
-        flows = collect_flows(repo, rest, args.limit_per_market)
+        import time as _t
+        _s = _t.time()
+        if async_enabled:
+            flows = asyncio.run(collect_flows_async(repo, args.limit_per_market, concurrency=async_concurrency))
+        else:
+            flows = collect_flows(repo, rest, args.limit_per_market)
         if not flows.empty:
             repo.upsert_flows(flows)
-            print(f"  flows rows: {len(flows)}")
+            print(f"  flows rows: {len(flows)}  ({_t.time()-_s:.1f}s)")
 
     if "program" in steps:
         print("[kiwoom] program trend collecting...")

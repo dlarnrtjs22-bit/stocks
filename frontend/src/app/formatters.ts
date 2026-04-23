@@ -117,6 +117,7 @@ export function fmtDateTime(value?: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -130,11 +131,15 @@ export function fmtDateTime(value?: string | null): string {
 export function fmtTimeHm(value?: string | null): string {
   if (!value) return '-';
   const raw = String(value);
-  const match = raw.match(/T(\d{2}):(\d{2})/);
-  if (match) return `${match[1]}:${match[2]}`;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return raw;
+  if (Number.isNaN(date.getTime())) {
+    // Date parsing 실패 시 raw에서 HH:MM 추출 fallback (timezone 정보 없는 naive string 케이스)
+    const match = raw.match(/T(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : raw;
+  }
+  // 서버가 UTC ISO(+00:00) 또는 offset 없는 ISO를 보내도 KST(Asia/Seoul) 기준으로 변환
   return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,

@@ -9,6 +9,7 @@ from batch.runtime_source.engine.human_labels import analysis_status_label, deci
 from batch.runtime_source.engine.scoring_constants import TOTAL_RULE_SCORE_MAX
 from backend.app.repositories.read_repository import ReadRepository
 from backend.app.schemas.closing_bet import BasisPayload, BasisSourceItem, ClosingBetItem, ClosingBetResponse, PaginationPayload
+from backend.app.services.nxt_lookup import get_nxt_lookup, recommended_plan
 from backend.app.services.view_helpers import infer_signal_grade, infer_themes, normalize_date_arg, safe_float, safe_int, safe_dt, time_ago
 
 
@@ -83,6 +84,14 @@ class ClosingBetService:
             overall_ai_top_k=safe_int(runtime_meta.get('overall_ai_top_k'), 0),
             sources=sources,
         )
+
+    # 이 메서드는 NXT 거래 가능 여부를 lookup 해서 권장 시점/주문유형을 반환한다.
+    # Design Ref: Design §6.2 — NXT 가능 → 19:40-19:55 / 불가 → 15:22-15:28
+    def _nxt_plan(self, stock_code: str) -> tuple[bool, str | None, str | None]:
+        entry = get_nxt_lookup().get(stock_code)
+        eligible = bool(entry and entry.eligible)
+        window, order_type = recommended_plan(eligible)
+        return eligible, window, order_type
 
     # 이 메서드는 view 행 하나를 화면용 카드 데이터로 바꾼다.
     def _to_item(self, row: dict[str, Any], fallback_external_context: dict[str, Any] | None = None) -> ClosingBetItem:
@@ -177,6 +186,10 @@ class ClosingBetService:
             market_status_label=market_status_label(market_context.get('market_status')),
             external_market_status_label=market_status_label(external_market_context.get('status')),
             chart_url=f"https://finance.naver.com/item/fchart.naver?code={str(row.get('stock_code', '')).zfill(6)}",
+            **dict(zip(
+                ('nxt_eligible', 'recommended_window', 'recommended_order_type'),
+                self._nxt_plan(str(row.get('stock_code', ''))),
+            )),
         )
 
     def _candidate_sort_key(self, row: dict[str, Any]) -> tuple[int, int, int, str]:

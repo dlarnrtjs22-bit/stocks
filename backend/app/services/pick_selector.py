@@ -91,3 +91,93 @@ def select_top_candidates(
             selected_codes.add(code)
 
     return selected[:max_items]
+
+
+# Design Ref: Design §6.2 Module C — NXT 가능 + Top 2 (섹터 다양성, 강세 섹터 예외)
+# Plan §6.2: 기본 다른 섹터, 예외로 같은 섹터 강세(sector_score=2 + leader=2 둘 다 + 섹터 상승률≥5%)
+def _same_sector_strong_exception(
+    top: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    thresholds: dict[str, float],
+) -> dict[str, Any] | None:
+    """1등 종목과 같은 섹터인 2등 대장주 반환 (조건 만족 시). 없으면 None."""
+    top_sector = _sector_key(top, "General")
+    top_sector_score = _safe_int(top.get("score_sector"))
+    top_leader_score = _safe_int(top.get("score_leader"))
+    if top_sector_score < int(thresholds.get("sector_score", 2)):
+        return None
+    if top_leader_score < int(thresholds.get("leader_score", 2)):
+        return None
+
+    same_sector = [r for r in candidates if _sector_key(r, "General") == top_sector and r is not top]
+    if not same_sector:
+        return None
+    # 섹터 상승률 평균 체크
+    avg_change = sum(_safe_float(r.get("change_pct"), 0.0) for r in same_sector) / len(same_sector)
+    if avg_change < float(thresholds.get("sector_avg_change_pct", 5.0)):
+        return None
+    # 같은 섹터 내 leader_score=2인 2등 후보 찾기
+    for r in same_sector:
+        if _safe_int(r.get("score_leader")) >= int(thresholds.get("leader_score", 2)):
+            return r
+    return None
+
+
+def select_top_2_sector_diverse(
+    rows: list[dict[str, Any]],
+    *,
+    fallback_sector: str = "General",
+    require_nxt_eligible: bool = True,
+    require_buy_status: bool = True,
+    same_sector_thresholds: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Module C: NXT 가능 + 매수 판정 종목만 대상, Top 2 섹터 다양성.
+
+    예외: 섹터 강세면 같은 섹터 2등 대장주 허용.
+    """
+    thresholds = same_sector_thresholds or {
+        "sector_score": 2,
+        "leader_score": 2,
+        "sector_avg_change_pct": 5.0,
+    }
+
+    # 1차 필터: NXT 가능 + 매수 판정
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if require_nxt_eligible and not bool(row.get("nxt_eligible", False)):
+            continue
+        if require_buy_status:
+            status = str(row.get("decision_status", "") or "").upper()
+            opinion = str(row.get("ai_opinion", "") or "").strip()
+            if not (status in BUYABLE_STATUSES or opinion == "매수"):
+                continue
+        filtered.append(row)
+
+    if not filtered:
+        return []
+
+    ordered = sorted(filtered, key=lambda row: candidate_priority(row, fallback_sector=fallback_sector))
+    if len(ordered) < 2:
+        return ordered[:1]
+
+    first = ordered[0]
+    first_sector = _sector_key(first, fallback_sector)
+
+    # 1) 다른 섹터 2등 우선 탐색
+    for row in ordered[1:]:
+        if _sector_key(row, fallback_sector) != first_sector:
+            # 2등 선정 전에 "강세 섹터 예외 성립 시 같은 섹터 2등이 더 강하면" 오버라이드
+            same_sector_alt = _same_sector_strong_exception(first, ordered, thresholds)
+            if same_sector_alt is not None:
+                # 같은 섹터 2등의 score_total이 다른 섹터 2등보다 더 높으면 override
+                if _safe_int(same_sector_alt.get("score_total")) > _safe_int(row.get("score_total")):
+                    return [first, same_sector_alt]
+            return [first, row]
+
+    # 2) 다른 섹터 후보 없음 → 같은 섹터 강세 예외 적용
+    same_sector_alt = _same_sector_strong_exception(first, ordered, thresholds)
+    if same_sector_alt is not None:
+        return [first, same_sector_alt]
+
+    # 3) 후보 부족
+    return [first]

@@ -68,6 +68,24 @@ export function ClosingTable({ rows, selectedTicker, onSelect }: ClosingTablePro
       ),
     },
     {
+      // Design Ref: Design §6.2 — NXT 가능(19:40-19:55) / 불가(15:22-15:28) 배지
+      key: 'venue',
+      header: '거래소',
+      width: '110px',
+      render: (row) => {
+        const eligible = row.nxt_eligible === true;
+        const window = row.recommended_window ?? (eligible ? '19:40-19:55' : '15:22-15:28');
+        return (
+          <div className="flex flex-col gap-0.5">
+            <Badge variant={eligible ? 'up' : 'neutral'} size="xs">
+              {eligible ? 'NXT ✓' : 'KRX only'}
+            </Badge>
+            <span className="text-[10px] text-text-muted num">{window}</span>
+          </div>
+        );
+      },
+    },
+    {
       key: 'score',
       header: '점수',
       width: '64px',

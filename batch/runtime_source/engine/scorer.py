@@ -75,6 +75,33 @@ class Scorer:
         else:
             score.news = default_news_score
 
+        # Design Ref: Design §5 Module B — 실체성 있는 뉴스 카운트 (수급단타왕 "실체없는 테마 경계")
+        # LLM 분석 OK + material_strength >= 0.3 만 실체 있는 재료로 인정
+        # decision_policy의 NEWS_BLOCKED 판단에 이 값을 쓰면 fallback 1점 뉴스가 매수 허용을 우회하는 허점 제거
+        material_threshold = 0.3
+        material_strength = 0.0
+        if isinstance(llm_meta, dict):
+            try:
+                material_strength = float(llm_meta.get("material_strength", 0) or 0)
+            except (TypeError, ValueError):
+                material_strength = 0.0
+        is_material = (
+            len(news_list) > 0
+            and str(llm_meta.get("status", "")).upper() == "OK"
+            and material_strength >= material_threshold
+        )
+        score.material_news_count = int(is_material)
+
+        # 실체없는 테마 감점: attention만 높고 material 낮으면 -1 (news_attention에서 차감)
+        try:
+            attention_score = float(llm_meta.get("attention_score", 0) or 0) if isinstance(llm_meta, dict) else 0.0
+        except (TypeError, ValueError):
+            attention_score = 0.0
+        # attention 높은데 material 낮음 = 실체없는 테마 → score.news가 2점 이상이면 1점으로 감점
+        if attention_score >= 1.5 and material_strength < material_threshold and score.news >= 2:
+            score.news = max(0, score.news - 1)
+            llm_reason = (llm_reason + " [실체없는 테마 감점 -1]").strip()
+
         score.llm_reason = llm_reason
         score.llm_meta = llm_meta
 
@@ -117,6 +144,13 @@ class Scorer:
                 score.supply = 2
             elif supply.foreign_buy_5d > 0 or supply.inst_buy_5d > 0:
                 score.supply = 1
+            # Design Ref: Design §5 Module B — 수급단타왕 "매일매일 매집" 연속성 보너스
+            # 외인 + 기관 모두 N일 이상 연속 순매수면 +1점 (pipeline에서 필드 채워야 작동)
+            from engine.scoring_constants import SUPPLY_CONTINUITY_MIN_DAYS
+            fgn_days = int(getattr(supply, "continuity_days_foreign", 0) or 0)
+            inst_days = int(getattr(supply, "continuity_days_institution", 0) or 0)
+            if fgn_days >= SUPPLY_CONTINUITY_MIN_DAYS and inst_days >= SUPPLY_CONTINUITY_MIN_DAYS:
+                score.supply_continuity = 1
 
         if market_context:
             breadth_delta = int(market_context.rise_count) - int(market_context.fall_count)

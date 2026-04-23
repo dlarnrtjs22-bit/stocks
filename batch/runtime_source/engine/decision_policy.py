@@ -148,6 +148,10 @@ def decide_trade_opinion(
     external_market_context: Optional[Dict[str, Any]] = None,
     grade_policy: Optional[Dict[str, Any]] = None,
     fresh_news_count: Any = None,
+    # Design Ref: Design §5 Module B — 실체성 있는 뉴스 카운트 (LLM OK + material_strength>=0.3)
+    # 값이 None이면 fallback으로 fresh_news_count를 기준으로 사용 (backward compat).
+    # 값이 주어지면 material_news_count == 0 에서 NEWS_BLOCKED 로 판단.
+    material_news_count: Any = None,
 ) -> Dict[str, Any]:
     if isinstance(grade_policy, dict) and grade_policy:
         policy = dict(grade_policy)
@@ -165,6 +169,8 @@ def decide_trade_opinion(
     risk_score = round(_safe_float(policy.get("risk_score"), 50.0), 2)
     total = _safe_int(total_score, 0)
     fresh_news = _safe_int(fresh_news_count, -1)
+    # Design Ref: Design §5 Module B — 실체성 있는 뉴스 우선, None이면 fresh_news_count로 fallback
+    material_news = _safe_int(material_news_count, -1) if material_news_count is not None else -1
 
     reasons: List[str] = [str(item).strip() for item in policy.get("reasons", []) if str(item).strip()]
     opinion = "매도"
@@ -181,7 +187,14 @@ def decide_trade_opinion(
         status = "BUY"
         reasons.append(f"시장 보정 후 {adjusted_grade}등급과 총점 {total}/{TOTAL_RULE_SCORE_MAX} 기준에서는 진입 가능 구간입니다.")
 
-    if fresh_news == 0:
+    # 뉴스 차단 판단: material_news_count가 주어졌으면 우선 사용 (실체있는 뉴스 기준)
+    # 아니면 fresh_news_count로 fallback (기존 동작 유지)
+    if material_news == 0:
+        if opinion == "매수":
+            opinion = "매도"
+            status = "NEWS_BLOCKED"
+        reasons.append("실체 있는 재료 뉴스(LLM 확인 + material_strength≥0.3)가 없어 신규 진입 근거가 약합니다.")
+    elif material_news < 0 and fresh_news == 0:
         if opinion == "매수":
             opinion = "매도"
             status = "NEWS_BLOCKED"
@@ -210,6 +223,7 @@ def decide_trade_opinion(
         "adjusted_grade": adjusted_grade,
         "total_score": total,
         "fresh_news_count": fresh_news,
+        "material_news_count": material_news,
         "market_status": market_status,
         "risk_score": risk_score,
         "grade_policy": policy,
