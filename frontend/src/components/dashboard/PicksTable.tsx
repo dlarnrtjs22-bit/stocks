@@ -16,9 +16,15 @@ export function PicksTable({ picks, selectedTicker, onSelect }: PicksTableProps)
   const columns: Column<DashboardPickPayload>[] = [
     {
       key: 'grade',
-      header: '등급',
-      width: '60px',
+      header: '진입',
+      width: '64px',
       render: (pick) => <Badge variant={gradeVariant(pick.grade)}>{pick.grade}</Badge>,
+    },
+    {
+      key: 'quality',
+      header: '퀄리티',
+      width: '72px',
+      render: (pick) => <Badge variant={gradeVariant(pick.quality_grade)}>{pick.quality_grade}</Badge>,
     },
     {
       key: 'name',
@@ -58,10 +64,10 @@ export function PicksTable({ picks, selectedTicker, onSelect }: PicksTableProps)
       width: '60px',
       align: 'right',
       render: (pick) => (
-        <span className="num text-text-primary">
-          {pick.score_total}
-          <span className="text-text-muted">/22</span>
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="num text-text-primary">{pick.score_total}</span>
+          <span className="text-[10px] text-text-muted">{pick.quality_label || `Q ${pick.quality_grade}`}</span>
+        </div>
       ),
     },
     {

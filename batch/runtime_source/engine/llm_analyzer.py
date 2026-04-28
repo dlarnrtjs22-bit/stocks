@@ -66,7 +66,7 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
-DEFAULT_CODEX_MODEL = "gpt-5.4"
+DEFAULT_CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-5.5").strip() or "gpt-5.5"
 
 
 def _format_trade_levels(metrics: Dict[str, Any]) -> str:
@@ -322,6 +322,9 @@ class LLMAnalyzer:
             external_market_context=external_market_context,
             grade_policy=market_policy,
             fresh_news_count=metrics.get("fresh_news_count"),
+            material_news_count=metrics.get("material_news_count"),
+            negative_news_count=metrics.get("negative_news_count"),
+            news_tone=metrics.get("news_tone"),
         )
         opinion = str(decision.get("opinion", "매도") or "매도")
 
@@ -661,6 +664,9 @@ class LLMAnalyzer:
             external_market_context=external_market_context,
             grade_policy=market_policy,
             fresh_news_count=metrics.get("fresh_news_count"),
+            material_news_count=metrics.get("material_news_count"),
+            negative_news_count=metrics.get("negative_news_count"),
+            news_tone=metrics.get("news_tone"),
         )
         final_opinion = str(decision.get("opinion", "매도") or "매도")
         final_summary = str(summary or "").strip()

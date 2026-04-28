@@ -42,6 +42,8 @@ class ClosingBetItem(BaseModel):
     market: str
     grade: str
     base_grade: str = 'C'
+    quality_grade: str = 'D'
+    quality_label: str = ''
     score_total: int
     score_max: int
     scores: dict[str, int] = Field(default_factory=dict)

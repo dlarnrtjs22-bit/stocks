@@ -34,6 +34,8 @@ export interface ClosingBetItem {
   market: string;
   grade: string;
   base_grade: string;
+  quality_grade: string;
+  quality_label: string;
   score_total: number;
   score_max: number;
   scores: Record<string, number>;
@@ -294,6 +296,8 @@ export interface DashboardPickPayload {
   sector: string;
   grade: string;
   base_grade: string;
+  quality_grade: string;
+  quality_label: string;
   decision_status: string;
   decision_label: string;
   score_total: number;

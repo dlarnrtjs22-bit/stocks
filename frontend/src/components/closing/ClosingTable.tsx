@@ -44,7 +44,7 @@ export function ClosingTable({ rows, selectedTicker, onSelect }: ClosingTablePro
     },
     {
       key: 'grade',
-      header: '등급',
+      header: '진입',
       width: '64px',
       render: (row) => (
         <div className="flex flex-col gap-0.5">
@@ -53,6 +53,14 @@ export function ClosingTable({ rows, selectedTicker, onSelect }: ClosingTablePro
             <span className="text-[10px] text-text-muted">원{row.base_grade}</span>
           ) : null}
         </div>
+      ),
+    },
+    {
+      key: 'quality',
+      header: '퀄리티',
+      width: '72px',
+      render: (row) => (
+        <Badge variant={gradeVariant(row.quality_grade)}>{row.quality_grade}</Badge>
       ),
     },
     {
@@ -88,13 +96,16 @@ export function ClosingTable({ rows, selectedTicker, onSelect }: ClosingTablePro
     {
       key: 'score',
       header: '점수',
-      width: '64px',
+      width: '72px',
       align: 'right',
       render: (row) => (
-        <span className="num text-text-primary">
-          {row.score_total}
-          <span className="text-text-muted">/{row.score_max}</span>
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="num text-text-primary">
+            {row.score_total}
+            <span className="text-text-muted">/{row.score_max}</span>
+          </span>
+          <span className="text-[10px] text-text-muted">{row.quality_label || `Q ${row.quality_grade}`}</span>
+        </div>
       ),
     },
     {

@@ -91,6 +91,8 @@ export interface Top2Candidate {
   stock_name: string;
   sector: string | null;
   score_total: number;
+  quality_grade: string;
+  quality_label: string;
   base_grade: string;
   final_grade: string;
   change_pct: number;

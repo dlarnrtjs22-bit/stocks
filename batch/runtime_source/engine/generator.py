@@ -34,15 +34,61 @@ from engine.freshness import assert_data_ready_for_run
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
 from engine.news_window import describe_news_window
 from engine.scorer import Scorer
-from engine.scoring_constants import TOTAL_RULE_SCORE_MAX
+from engine.scoring_constants import TOTAL_RULE_SCORE_MAX, score_quality_priority
 from engine.position_sizer import PositionSizer
 from engine.llm_analyzer import LLMAnalyzer
 from supabase_py.db import is_supabase_backend
 from supabase_py.repository import SupabaseRepository
 
 
+GRADE_PRIORITY = {"S": 0, "A": 1, "B": 2, "C": 3}
+
+
 def _grade_value(value: Grade | str) -> str:
     return value.value if isinstance(value, Grade) else str(value)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _overall_ai_priority(sig: Signal, initial_order: Dict[int, int]) -> tuple[Any, ...]:
+    ai_overall = sig.ai_overall if isinstance(sig.ai_overall, dict) else {}
+    base_grade = str(ai_overall.get("base_grade", _grade_value(sig.grade)) or _grade_value(sig.grade)).upper()
+    final_grade = _grade_value(sig.grade).upper()
+    score = sig.score
+    score_total = _safe_int(getattr(score, "total", 0))
+    context_score = (
+        _safe_int(getattr(score, "sector", 0)) * 3
+        + _safe_int(getattr(score, "leader", 0)) * 3
+        + _safe_int(getattr(score, "intraday", 0)) * 2
+        + _safe_int(getattr(score, "news_attention", 0)) * 2
+    )
+    fresh_news_count = len(sig.news_items if isinstance(sig.news_items, list) else [])
+    news_bonus = 2 if fresh_news_count > 0 else 0
+    trading_value = _safe_int(sig.trading_value)
+    liquidity_bonus = min(4, trading_value // 100_000_000_000)
+    return (
+        GRADE_PRIORITY.get(base_grade, 9),
+        GRADE_PRIORITY.get(final_grade, 9),
+        score_quality_priority(score_total),
+        -(score_total + context_score + news_bonus + liquidity_bonus),
+        -_safe_float(sig.change_pct),
+        -trading_value,
+        str(sig.sector or "General"),
+        str(sig.stock_code or ""),
+        initial_order.get(id(sig), 999999),
+    )
 
 
 def _reference_trade_date(freshness_report: Dict[str, Any]) -> date:
@@ -53,6 +99,18 @@ def _reference_trade_date(freshness_report: Dict[str, Any]) -> date:
         except ValueError:
             pass
     return date.today()
+
+
+def _news_policy_metrics(score: ScoreDetail) -> Dict[str, Any]:
+    llm_meta = getattr(score, "llm_meta", {}) if score is not None else {}
+    if not isinstance(llm_meta, dict):
+        llm_meta = {}
+    news_tone = str(llm_meta.get("tone", "") or "").strip().lower()
+    return {
+        "material_news_count": int(getattr(score, "material_news_count", 0) or 0),
+        "news_tone": news_tone,
+        "negative_news_count": 1 if news_tone == "negative" else 0,
+    }
 
 
 class SignalGenerator:
@@ -174,7 +232,7 @@ class SignalGenerator:
         if not signals:
             return
         top_k = min(len(signals), self.max_overall_ai_calls)
-        # Align overall AI targets with the same score-driven shortlist the UI highlights.
+        # Match the pre-LLM part of the Featured shortlist ordering.
         initial_order = {id(sig): idx for idx, sig in enumerate(signals)}
         ai_candidates = [
             sig for sig in signals
@@ -182,14 +240,7 @@ class SignalGenerator:
         ]
         ai_target_ids = {
             id(sig)
-            for sig in sorted(
-                ai_candidates,
-                key=lambda sig: (
-                    -int(sig.score.total or 0),
-                    initial_order[id(sig)],
-                    -int(sig.trading_value or 0),
-                ),
-            )[:top_k]
+            for sig in sorted(ai_candidates, key=lambda sig: _overall_ai_priority(sig, initial_order))[:top_k]
         }
         if top_k <= 0:
             for sig in signals:
@@ -212,6 +263,7 @@ class SignalGenerator:
                     "intraday_context": dict(sig.ai_overall.get("intraday_context", {})) if isinstance(sig.ai_overall.get("intraday_context"), dict) else {},
                     "fresh_news_count": len(sig.news_items[:3] if isinstance(sig.news_items, list) else []),
                     "news_window_label": str(sig.ai_overall.get("news_window_label", "") or "") if isinstance(sig.ai_overall, dict) else "",
+                    **_news_policy_metrics(sig.score),
                 }
                 fallback = self.llm_analyzer.build_rule_based_overall(
                     stock_name=sig.stock_name,
@@ -302,6 +354,7 @@ class SignalGenerator:
                 metrics["news_attention"] = news_attention
             metrics["fresh_news_count"] = len(news_items)
             metrics["news_window_label"] = str(sig.ai_overall.get("news_window_label", "") or "") if isinstance(sig.ai_overall, dict) else ""
+            metrics.update(_news_policy_metrics(sig.score))
 
             if id(sig) not in ai_target_ids:
                 fallback = self.llm_analyzer.build_rule_based_overall(
@@ -542,6 +595,7 @@ class SignalGenerator:
                     "base_grade": base_grade.value,
                     "news_window_label": news_window_label,
                     "fresh_news_count": len(news_list),
+                    **_news_policy_metrics(score),
                 },
                 foreign_5d=int(getattr(supply, "foreign_buy_5d", 0) or 0),
                 inst_5d=int(getattr(supply, "inst_buy_5d", 0) or 0),

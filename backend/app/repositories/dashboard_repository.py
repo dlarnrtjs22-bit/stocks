@@ -105,6 +105,44 @@ class DashboardRepository:
           v.ai_summary,
           v.ai_opinion,
           v.decision_status,
+          case
+            when coalesce(
+              v.score->>'material_news_count',
+              v.ai_overall->>'material_news_count',
+              v.ai_overall->'meta'->'decision'->>'material_news_count',
+              ''
+            ) ~ '^-?[0-9]+$'
+              then coalesce(
+                v.score->>'material_news_count',
+                v.ai_overall->>'material_news_count',
+                v.ai_overall->'meta'->'decision'->>'material_news_count'
+              )::int
+            else 0
+          end as material_news_count,
+          coalesce(
+            v.score->'llm_meta'->>'tone',
+            v.ai_overall->>'news_tone',
+            v.ai_overall->'meta'->'decision'->>'news_tone',
+            ''
+          ) as news_tone,
+          case
+            when lower(coalesce(
+              v.score->'llm_meta'->>'tone',
+              v.ai_overall->>'news_tone',
+              v.ai_overall->'meta'->'decision'->>'news_tone',
+              ''
+            )) = 'negative' then 1
+            when coalesce(
+              v.ai_overall->>'negative_news_count',
+              v.ai_overall->'meta'->'decision'->>'negative_news_count',
+              ''
+            ) ~ '^-?[0-9]+$'
+              then coalesce(
+                v.ai_overall->>'negative_news_count',
+                v.ai_overall->'meta'->'decision'->>'negative_news_count'
+              )::int
+            else 0
+          end as negative_news_count,
           v.sector_leadership,
           v.intraday_pressure,
           v.news_attention,
@@ -142,6 +180,24 @@ class DashboardRepository:
             with conn.cursor() as cur:
                 cur.execute(sql, {"limit": int(limit)})
                 return list(cur.fetchall())
+
+    def fetch_latest_tracked_pick_codes(self) -> list[str]:
+        sql = """
+        with latest_run as (
+          select run_id
+          from jongga_runs
+          order by created_at desc
+          limit 1
+        )
+        select tp.stock_code
+        from jongga_tracked_picks tp
+        join latest_run lr on lr.run_id = tp.run_id
+        order by tp.featured_rank asc, tp.signal_rank asc
+        """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return [str(row.get("stock_code", "") or "").zfill(6) for row in cur.fetchall()]
 
     def fetch_account_snapshot(self) -> dict[str, Any] | None:
         sql = """

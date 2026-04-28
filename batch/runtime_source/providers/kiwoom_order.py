@@ -315,23 +315,74 @@ class KiwoomOrderClient:
 
 
 # ─── 가격 전략 헬퍼 ───────────────────────────────────────
-def compute_buy_price(snapshot: QuoteSnapshot, strategy: str, tick_size: int = 1) -> int:
+def krx_tick_size(price: int) -> int:
+    """Return the domestic stock tick size for a positive order price."""
+    p = abs(int(price or 0))
+    if p < 2_000:
+        return 1
+    if p < 5_000:
+        return 5
+    if p < 20_000:
+        return 10
+    if p < 50_000:
+        return 50
+    if p < 200_000:
+        return 100
+    if p < 500_000:
+        return 500
+    return 1_000
+
+
+def normalize_order_price(price: int, *, mode: Literal["down", "up", "nearest"] = "nearest") -> int:
+    """Align an order price to the KRX/NXT tick grid."""
+    p = abs(int(price or 0))
+    if p <= 0:
+        return 0
+    tick = krx_tick_size(p)
+    remainder = p % tick
+    if remainder == 0:
+        return p
+    lower = p - remainder
+    upper = lower + tick
+    if mode == "down":
+        return lower
+    if mode == "up":
+        return upper
+    return lower if (p - lower) < (upper - p) else upper
+
+
+def _effective_tick(price: int, tick_size: int | None) -> int:
+    try:
+        override = int(tick_size or 0)
+    except (TypeError, ValueError):
+        override = 0
+    return override if override > 1 else krx_tick_size(price)
+
+
+def _next_tick_price(price: int, tick_size: int | None = None) -> int:
+    base = normalize_order_price(price, mode="down")
+    if base <= 0:
+        return 0
+    return normalize_order_price(base + _effective_tick(base, tick_size), mode="up")
+
+
+def compute_buy_price(snapshot: QuoteSnapshot, strategy: str, tick_size: int | None = None) -> int:
     """Design Ref: Design §5.4 — T1 maker / T2 neutral / T3 taker"""
     s = str(strategy or "").upper()
     if s == "MAKER_BID_PLUS_TICK":
-        return snapshot.bid1 + tick_size if snapshot.bid1 > 0 else snapshot.last
+        return _next_tick_price(snapshot.bid1, tick_size) if snapshot.bid1 > 0 else normalize_order_price(snapshot.last)
     if s == "TAKER_ASK":
-        return snapshot.ask1 if snapshot.ask1 > 0 else snapshot.last
+        return normalize_order_price(snapshot.ask1) if snapshot.ask1 > 0 else normalize_order_price(snapshot.last)
     # default: LAST (중립)
-    return snapshot.last if snapshot.last > 0 else snapshot.bid1
+    return normalize_order_price(snapshot.last) if snapshot.last > 0 else normalize_order_price(snapshot.bid1)
 
 
 def compute_sell_price(snapshot: QuoteSnapshot, strategy: str, discount_pct: float = 0.0) -> int:
     """매도 가격 계산. discount_pct는 현재가 대비 낮추는 비율 (예: 1.0 = -1%)."""
     s = str(strategy or "").upper()
     if s == "BID1_TAKER":
-        return snapshot.bid1 if snapshot.bid1 > 0 else snapshot.last
+        return normalize_order_price(snapshot.bid1, mode="down") if snapshot.bid1 > 0 else normalize_order_price(snapshot.last, mode="down")
     if s == "LAST_MINUS_PCT":
         base = snapshot.last if snapshot.last > 0 else snapshot.bid1
-        return int(base * (1.0 - discount_pct / 100.0))
-    return snapshot.last if snapshot.last > 0 else snapshot.bid1
+        return normalize_order_price(int(base * (1.0 - discount_pct / 100.0)), mode="down")
+    return normalize_order_price(snapshot.last, mode="down") if snapshot.last > 0 else normalize_order_price(snapshot.bid1, mode="down")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from batch.runtime_source.providers.kiwoom_client import KiwoomAPIError, KiwoomRESTClient, venue_stock_code
@@ -108,6 +108,10 @@ class PerformanceService:
 
         tracked_count = 0
         for run_day in run_dates:
+            existing_picks = self.repository.fetch_tracked_pick_rows(run_day.isoformat())
+            if existing_picks:
+                tracked_count += len(existing_picks)
+                continue
             run_meta, picks = self._top_featured_picks(run_day.isoformat())
             if not run_meta:
                 continue
@@ -208,7 +212,7 @@ class PerformanceService:
         run_meta = bundle['run_meta']
         basis = self.closing_service._build_basis(request_date, run_meta)
         selected_date = basis.selected_date
-        is_today = selected_date == datetime.now(timezone.utc).date().isoformat()
+        is_today = selected_date == datetime.now(SEOUL_TZ).date().isoformat()
 
         trades: list[PerformanceTradeItem] = []
         for row in bundle['page_rows']:

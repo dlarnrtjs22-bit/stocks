@@ -77,7 +77,7 @@ class Scorer:
 
         # Design Ref: Design §5 Module B — 실체성 있는 뉴스 카운트 (수급단타왕 "실체없는 테마 경계")
         # LLM 분석 OK + material_strength >= 0.3 만 실체 있는 재료로 인정
-        # decision_policy의 NEWS_BLOCKED 판단에 이 값을 쓰면 fallback 1점 뉴스가 매수 허용을 우회하는 허점 제거
+        # decision_policy uses this as a confidence input; no-news is not a hard block.
         material_threshold = 0.3
         material_strength = 0.0
         if isinstance(llm_meta, dict):

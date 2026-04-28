@@ -42,7 +42,10 @@ export function PickDetailPanel({ pick }: PickDetailPanelProps) {
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-md font-semibold text-text-primary truncate">{pick.name}</h3>
               <Badge variant={gradeVariant(pick.grade)} size="xs">
-                {pick.grade}
+                진입 {pick.grade}
+              </Badge>
+              <Badge variant={gradeVariant(pick.quality_grade)} size="xs">
+                퀄리티 {pick.quality_grade}
               </Badge>
               <Badge variant="neutral" size="xs">
                 {pick.market}
@@ -98,6 +101,14 @@ export function PickDetailPanel({ pick }: PickDetailPanelProps) {
             <MetricRow
               label="거래소"
               value={<span className="text-text-primary text-sm">{pick.venue || '-'}</span>}
+            />
+            <MetricRow
+              label="점수"
+              value={<span className="num text-text-primary">{pick.score_total}</span>}
+            />
+            <MetricRow
+              label="점수퀄리티"
+              value={<Badge variant={gradeVariant(pick.quality_grade)} size="xs">{pick.quality_label || pick.quality_grade}</Badge>}
             />
           </div>
         </section>

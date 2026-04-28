@@ -9,7 +9,7 @@ import {
   type HistoryListResponse, type HistoryDetail,
 } from '../api/endpoints';
 import { Panel } from '../components/ui/Panel';
-import { Badge, type BadgeVariant } from '../components/ui/Badge';
+import { Badge, gradeVariant, type BadgeVariant } from '../components/ui/Badge';
 import { Num } from '../components/ui/Num';
 
 // Design Ref: Design §5.7 + §9 Module G — 자동매매 전체 컨트롤
@@ -163,14 +163,20 @@ function Top2Card({ top2 }: { top2: Top2Response | null }) {
               </div>
               <div className="text-right">
                 <Badge variant={c.final_grade === 'S' ? 'up' : c.final_grade === 'A' ? 'info' : 'neutral'}>
-                  {c.final_grade}
+                  진입 {c.final_grade}
                 </Badge>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-1 text-[11px]">
+            <div className="grid grid-cols-4 gap-1 text-[11px]">
               <div>
                 <div className="text-text-muted">점수</div>
                 <div className="text-text-primary num">{c.score_total}</div>
+              </div>
+              <div>
+                <div className="text-text-muted">퀄리티</div>
+                <Badge variant={gradeVariant(c.quality_grade)} size="xs">
+                  {c.quality_grade}
+                </Badge>
               </div>
               <div>
                 <div className="text-text-muted">등락</div>

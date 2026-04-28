@@ -80,6 +80,19 @@ def infer_signal_grade(score_total: Any, trading_value: Any, change_pct: Any) ->
     return Grade.C.value
 
 
+def normalize_signal_grade(value: Any) -> str:
+    grade = str(value or '').strip().upper()
+    return grade if grade in {'S', 'A', 'B', 'C'} else ''
+
+
+def resolve_signal_grades(row: dict[str, Any]) -> tuple[str, str]:
+    final_grade = normalize_signal_grade(row.get('grade'))
+    if not final_grade:
+        final_grade = infer_signal_grade(row.get('score_total'), row.get('trading_value'), row.get('change_pct'))
+    base_grade = normalize_signal_grade(row.get('base_grade')) or final_grade
+    return final_grade, base_grade
+
+
 # 이 함수는 종목명에서 화면 태그에 사용할 간단한 테마를 추론한다.
 def infer_themes(name: str) -> list[str]:
     target = str(name or '').lower()

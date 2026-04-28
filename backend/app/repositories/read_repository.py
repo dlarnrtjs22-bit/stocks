@@ -428,6 +428,44 @@ class ReadRepository:
             coalesce(js.ai_overall->>'status', '') as ai_status,
             coalesce(js.ai_overall->>'opinion', '') as ai_opinion,
             coalesce(js.ai_overall->'meta'->'decision'->>'status', '') as decision_status,
+            case
+              when coalesce(
+                js.score->>'material_news_count',
+                js.ai_overall->>'material_news_count',
+                js.ai_overall->'meta'->'decision'->>'material_news_count',
+                ''
+              ) ~ '^-?[0-9]+$'
+                then coalesce(
+                  js.score->>'material_news_count',
+                  js.ai_overall->>'material_news_count',
+                  js.ai_overall->'meta'->'decision'->>'material_news_count'
+                )::int
+              else 0
+            end as material_news_count,
+            coalesce(
+              js.score->'llm_meta'->>'tone',
+              js.ai_overall->>'news_tone',
+              js.ai_overall->'meta'->'decision'->>'news_tone',
+              ''
+            ) as news_tone,
+            case
+              when lower(coalesce(
+                js.score->'llm_meta'->>'tone',
+                js.ai_overall->>'news_tone',
+                js.ai_overall->'meta'->'decision'->>'news_tone',
+                ''
+              )) = 'negative' then 1
+              when coalesce(
+                js.ai_overall->>'negative_news_count',
+                js.ai_overall->'meta'->'decision'->>'negative_news_count',
+                ''
+              ) ~ '^-?[0-9]+$'
+                then coalesce(
+                  js.ai_overall->>'negative_news_count',
+                  js.ai_overall->'meta'->'decision'->>'negative_news_count'
+                )::int
+              else 0
+            end as negative_news_count,
             coalesce(js.ai_overall->'meta'->'evidence', '[]'::jsonb) as ai_evidence,
             coalesce(js.ai_overall->'meta'->'breakdown', '{}'::jsonb) as ai_breakdown,
             coalesce(js.ai_overall->'market_context', '{}'::jsonb) as market_context,
@@ -508,6 +546,22 @@ class ReadRepository:
               order by n.score_total desc, n.signal_rank asc, n.trading_value desc
             )
             from numbered n
+          ), '[]'::jsonb) as selection_rows,
+          coalesce((
+            select jsonb_agg(
+              to_jsonb(n) - 'rn'
+              order by tp.featured_rank asc, tp.signal_rank asc
+            )
+            from jongga_tracked_picks tp
+            join numbered n on n.stock_code = tp.stock_code
+            where tp.run_id = sr.run_id
+          ), '[]'::jsonb) as tracked_rows,
+          coalesce((
+            select jsonb_agg(
+              to_jsonb(n) - 'rn'
+              order by n.score_total desc, n.signal_rank asc, n.trading_value desc
+            )
+            from numbered n
             where n.rn <= %(featured_limit)s::int
           ), '[]'::jsonb) as featured_rows,
           coalesce((
@@ -544,6 +598,8 @@ class ReadRepository:
                 'run_meta': None,
                 'aggregate': {'total': 0, 'signals_count': 0, 'grade_s': 0, 'grade_a': 0, 'grade_b': 0, 'grade_c': 0},
                 'featured_rows': [],
+                'selection_rows': [],
+                'tracked_rows': [],
                 'page_rows': [],
                 'list_total': 0,
                 'page': 1,
@@ -570,6 +626,8 @@ class ReadRepository:
             'run_meta': run_meta,
             'aggregate': aggregate,
             'featured_rows': _as_list(row.get('featured_rows')),
+            'selection_rows': _as_list(row.get('selection_rows')),
+            'tracked_rows': _as_list(row.get('tracked_rows')),
             'page_rows': _as_list(row.get('page_rows')),
             'list_total': int(row.get('list_total') or 0),
             'page': int(row.get('safe_page') or 1),

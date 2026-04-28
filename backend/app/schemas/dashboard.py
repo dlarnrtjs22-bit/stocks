@@ -61,6 +61,8 @@ class DashboardPickPayload(BaseModel):
     sector: str
     grade: str
     base_grade: str = 'C'
+    quality_grade: str = 'D'
+    quality_label: str = ''
     decision_status: str = 'WATCH'
     decision_label: str = ''
     score_total: int

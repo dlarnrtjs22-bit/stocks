@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from batch.runtime_source.engine.scoring_constants import score_quality_grade
 from backend.app.core.config import settings
 from backend.app.core.database import db_connection
 
@@ -203,6 +204,8 @@ def get_top2_candidates(date_arg: str | None = Query(None, alias="date")) -> dic
                         "stock_name": row["stock_name"],
                         "sector": row["sector"],
                         "score_total": row["score_total"],
+                        "quality_grade": score_quality_grade(row["score_total"]),
+                        "quality_label": f"퀄리티 {score_quality_grade(row['score_total'])}",
                         "base_grade": row["base_grade"],
                         "final_grade": row["final_grade"],
                         "change_pct": float(row["change_pct"] or 0),

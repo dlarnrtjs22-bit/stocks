@@ -9,13 +9,14 @@ Usage:
     python -m batch.runtime_source.pipelines.daily_candidate_extract --dry-run    # 저장 안함
 
 호출 체인:
-  1. ClosingBetService로 오늘 featured/items 조회 (nxt_eligible 이미 채워져 있음)
+  1. ClosingBetService로 오늘 공식 Featured 5 조회 (nxt_eligible 이미 채워져 있음)
   2. pick_selector.select_top_2_sector_diverse 로 Top 2 선정
   3. candidate_set_v3 테이블에 스냅샷 저장 (migration V2 필요)
 """
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import sys
 from datetime import date, datetime, timezone
@@ -43,8 +44,17 @@ def _write_extract_status(status: dict[str, Any]) -> None:
         pass
 
 
+def _candidate_rows_from_response(resp: Any) -> list[dict[str, Any]]:
+    rows = [item.model_dump() for item in resp.featured_items]
+    for row in rows:
+        row.setdefault("ticker", row.get("stock_code", ""))
+        row.setdefault("stock_code", row.get("ticker", ""))
+        row.setdefault("stock_name", row.get("name", ""))
+    return rows
+
+
 def run(date_arg: str | None = None, dry_run: bool = False) -> int:
-    from backend.app.core.database import open_db_pool
+    from backend.app.core.database import close_db_pool, open_db_pool
     from backend.app.services.closing_bet_service import ClosingBetService
     from backend.app.services.pick_selector import select_top_2_sector_diverse
     from backend.app.services.view_helpers import safe_int
@@ -52,6 +62,7 @@ def run(date_arg: str | None = None, dry_run: bool = False) -> int:
     # subprocess 실행 시 DB 풀이 없어서 초기화 필요 (main.py의 lifespan 미적용)
     try:
         open_db_pool()
+        atexit.register(close_db_pool)
     except Exception as exc:
         print(f"[extract] DB 풀 초기화 실패: {exc}", file=sys.stderr)
         return 3
@@ -101,21 +112,14 @@ def run(date_arg: str | None = None, dry_run: bool = False) -> int:
     svc = ClosingBetService()
     resp = svc.get_closing_bet(target_date, "ALL", "", 1, 200)
 
-    # featured + items 모두 후보 풀에 포함 (dedup)
-    all_rows = [item.model_dump() for item in resp.featured_items]
-    seen = {r["ticker"] for r in all_rows}
-    for item in resp.items:
-        d = item.model_dump()
-        if d["ticker"] not in seen:
-            all_rows.append(d)
-            seen.add(d["ticker"])
+    # The official daily pool is the Featured 5. Page rows are review-only.
+    all_rows = _candidate_rows_from_response(resp)
+    run_meta = svc.repository.fetch_run_meta(target_date)
+    if run_meta and not svc.repository.fetch_tracked_pick_rows(target_date):
+        saved_count = svc.repository.replace_tracked_picks(run_meta, all_rows)
+        print(f"[extract] official Featured 5 fixed: {saved_count}")
 
-    # pick_selector는 stock_code 키를 사용하므로 ticker를 stock_code로 alias
-    for r in all_rows:
-        r.setdefault("stock_code", r.get("ticker", ""))
-        r.setdefault("stock_name", r.get("name", ""))
-
-    print(f"[extract] {target_date} 전체 후보 풀: {len(all_rows)}")
+    print(f"[extract] {target_date} official pool: {len(all_rows)}")
     nxt_count = sum(1 for r in all_rows if bool(r.get("nxt_eligible")))
     print(f"[extract] NXT 가능: {nxt_count}")
 
@@ -159,6 +163,7 @@ def run(date_arg: str | None = None, dry_run: bool = False) -> int:
                         PRIMARY KEY (set_date, rank, created_at)
                     )
                 """)
+                cur.execute("DELETE FROM candidate_set_v3 WHERE set_date = %s", (target_date,))
                 for rank_idx, p in enumerate(picks, 1):
                     # UPSERT: 같은 날 같은 종목은 최신 스냅샷으로 덮어쓴다 (uq_candidate_set_v3_date_code 인덱스).
                     # extract 가 수동/자동 중복 실행돼도 중복 row 가 쌓이지 않음.

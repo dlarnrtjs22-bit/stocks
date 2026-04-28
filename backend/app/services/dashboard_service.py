@@ -5,14 +5,16 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from batch.runtime_source.engine.config import Grade, SignalConfig
+from batch.runtime_source.engine.decision_policy import decide_trade_opinion
 from batch.runtime_source.engine.human_labels import decision_status_label, humanize_text, market_status_label, minute_pattern_label
 from batch.runtime_source.engine.llm_analyzer import LLMAnalyzer
+from batch.runtime_source.engine.scoring_constants import score_quality_grade
 from batch.runtime_source.engine.theme_classifier import infer_theme
 from batch.runtime_source.providers.kiwoom_client import KiwoomRESTClient
 from backend.app.repositories.dashboard_repository import DashboardRepository
 from backend.app.schemas.dashboard import DashboardAccountPayload, DashboardAccountPosition, DashboardMarketItem, DashboardPickPayload, DashboardResponse
-from backend.app.services.view_helpers import infer_signal_grade, safe_dt, safe_float, safe_int
+from backend.app.services.pick_selector import select_official_candidates
+from backend.app.services.view_helpers import resolve_signal_grades, safe_dt, safe_float, safe_int
 
 
 MAX_DASHBOARD_PICKS = 5
@@ -21,7 +23,6 @@ MAX_DASHBOARD_PICKS = 5
 class DashboardService:
     def __init__(self, repository: DashboardRepository | None = None) -> None:
         self.repository = repository or DashboardRepository()
-        self._signal_config = SignalConfig.default()
         self._use_llm_reports = str(os.getenv('DASHBOARD_LLM_REPORTS', '0')).strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
         try:
             self._analyzer = LLMAnalyzer()
@@ -151,40 +152,29 @@ class DashboardService:
         texts = [str(item.get("title", "")) for item in news_items[:3]]
         return infer_theme(str(row.get("stock_name", "")), texts=texts, fallback="General")
 
-    def _is_pick_eligible(self, row: dict[str, Any]) -> bool:
-        grade = infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct"))
-        ai_opinion = str(row.get("ai_opinion", "") or "").strip()
-        score_total = safe_int(row.get("score_total"))
-        trading_value = safe_int(row.get("trading_value"))
-
-        if grade not in {"S", "A", "B"}:
-            return False
-        if ai_opinion and ai_opinion != "매수":
-            return False
-        grade_cfg = self._signal_config.grade_configs.get(Grade[grade])
-        if grade_cfg is None:
-            return False
-        if score_total < int(grade_cfg.min_score):
-            return False
-        if trading_value < int(grade_cfg.min_trading_value):
-            return False
-        return True
-
-    def _candidate_sort_key(self, row: dict[str, Any]) -> tuple[int, int, int, str]:
-        return (
-            -safe_int(row.get("score_total"), 0),
-            safe_int(row.get("signal_rank"), 9999),
-            -safe_int(row.get("trading_value"), 0),
-            str(row.get("stock_code", "") or ""),
+    def _apply_trade_policy(self, row: dict[str, Any]) -> dict[str, Any]:
+        resolved_grade, _base_grade = resolve_signal_grades(row)
+        references = row.get("news_items") if isinstance(row.get("news_items"), list) else []
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
+        program_context = row.get("program_context") if isinstance(row.get("program_context"), dict) else {}
+        external_market_context = row.get("external_market_context") if isinstance(row.get("external_market_context"), dict) else {}
+        market_policy = row.get("market_policy") if isinstance(row.get("market_policy"), dict) else {}
+        policy = decide_trade_opinion(
+            grade=resolved_grade,
+            total_score=safe_int(row.get("score_total")),
+            market_context=market_context,
+            program_context=program_context,
+            external_market_context=external_market_context,
+            grade_policy=market_policy,
+            fresh_news_count=len(references),
+            material_news_count=row.get("material_news_count"),
+            negative_news_count=row.get("negative_news_count"),
+            news_tone=row.get("news_tone"),
         )
-
-    def _select_watchlist(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        rows = [row for row in rows if infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct")) in {"S", "A", "B"}]
-        return sorted(rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
-
-    def _select_picks(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        rows = [row for row in rows if self._is_pick_eligible(row)]
-        return sorted(rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
+        updated = dict(row)
+        updated["decision_status"] = str(policy.get("status") or row.get("decision_status") or "WATCH").upper()
+        updated["ai_opinion"] = str(policy.get("opinion") or row.get("ai_opinion") or "")
+        return updated
 
     def _fallback_pick_report(self, row: dict[str, Any]) -> dict[str, Any]:
         intraday = {
@@ -259,7 +249,7 @@ class DashboardService:
     async def _build_dashboard(self, refresh_account: bool) -> DashboardResponse:
         market_rows = self.repository.fetch_market_rows()
         program_rows = self.repository.fetch_program_rows()
-        candidate_rows = self.repository.fetch_latest_candidates()
+        candidate_rows = self.repository.fetch_latest_candidates(limit=200)
         account_row = self.repository.fetch_account_snapshot()
         account_positions_rows = self.repository.fetch_account_positions(account_row.get("account_no") if account_row else None)
         account_note = "계좌는 Dashboard Refresh 시에만 조회를 시도합니다."
@@ -269,26 +259,21 @@ class DashboardService:
             account_positions_rows = self.repository.fetch_account_positions(account_row.get("account_no") if account_row else None)
 
         markets, market_summary = self._build_market_summary(market_rows, program_rows)
-        picks_rows = self._select_picks(candidate_rows)
-        if len(picks_rows) < MAX_DASHBOARD_PICKS:
-            fallback_rows = self._select_watchlist(candidate_rows)
-            seen = {str(row.get("stock_code", "") or "") for row in picks_rows}
-            for row in fallback_rows:
-                code = str(row.get("stock_code", "") or "")
-                if code in seen:
-                    continue
-                picks_rows.append(row)
-                seen.add(code)
-                if len(picks_rows) >= MAX_DASHBOARD_PICKS:
-                    break
-        picks_rows = sorted(picks_rows, key=self._candidate_sort_key)[:MAX_DASHBOARD_PICKS]
+        tracked_codes = self.repository.fetch_latest_tracked_pick_codes()
+        rows_by_code = {str(row.get("stock_code", "") or "").zfill(6): row for row in candidate_rows}
+        picks_rows = [rows_by_code[code] for code in tracked_codes if code in rows_by_code][:MAX_DASHBOARD_PICKS]
+        if not picks_rows:
+            picks_rows = select_official_candidates(candidate_rows, max_items=MAX_DASHBOARD_PICKS)
+        picks_rows = [self._apply_trade_policy(row) for row in picks_rows]
         reports = await asyncio.gather(*[self._generate_pick_report_with_timeout(market_summary, row) for row in picks_rows]) if picks_rows else []
 
         picks: list[DashboardPickPayload] = []
         for row, report in zip(picks_rows, reports):
-            resolved_grade = infer_signal_grade(row.get("score_total"), row.get("trading_value"), row.get("change_pct"))
+            resolved_grade, base_grade = resolve_signal_grades(row)
             references = row.get("news_items") if isinstance(row.get("news_items"), list) else []
             ai_evidence = row.get("ai_evidence") if isinstance(row.get("ai_evidence"), list) else []
+            score_total = safe_int(row.get("score_total"))
+            quality_grade = score_quality_grade(score_total)
             picks.append(
                 DashboardPickPayload(
                     ticker=str(row.get("stock_code", "")).zfill(6),
@@ -296,10 +281,12 @@ class DashboardService:
                     market=str(row.get("market", "")),
                     sector=self._sector_key(row),
                     grade=resolved_grade,
-                    base_grade=resolved_grade,
+                    base_grade=base_grade,
+                    quality_grade=quality_grade,
+                    quality_label=f"퀄리티 {quality_grade}",
                     decision_status=str(row.get("decision_status", "WATCH") or "WATCH"),
                     decision_label=decision_status_label(row.get("decision_status", "WATCH")),
-                    score_total=safe_int(row.get("score_total")),
+                    score_total=score_total,
                     trading_value=safe_int(row.get("trading_value")),
                     change_pct=safe_float(row.get("change_pct")),
                     current_price=safe_float(row.get("current_price")),

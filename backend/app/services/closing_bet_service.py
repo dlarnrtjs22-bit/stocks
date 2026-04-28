@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 # 이 파일은 종가배팅 화면 응답을 조립한다.
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from batch.runtime_source.engine.decision_policy import decide_trade_opinion
 from batch.runtime_source.engine.human_labels import analysis_status_label, decision_status_label, humanize_text, market_status_label, minute_pattern_label
-from batch.runtime_source.engine.scoring_constants import TOTAL_RULE_SCORE_MAX
+from batch.runtime_source.engine.scoring_constants import TOTAL_RULE_SCORE_MAX, score_quality_grade
 from backend.app.repositories.read_repository import ReadRepository
 from backend.app.schemas.closing_bet import BasisPayload, BasisSourceItem, ClosingBetItem, ClosingBetResponse, PaginationPayload
 from backend.app.services.nxt_lookup import get_nxt_lookup, recommended_plan
-from backend.app.services.view_helpers import infer_signal_grade, infer_themes, normalize_date_arg, safe_float, safe_int, safe_dt, time_ago
+from backend.app.services.pick_selector import count_buyable_candidates, select_official_candidates
+from backend.app.services.view_helpers import infer_themes, normalize_date_arg, resolve_signal_grades, safe_float, safe_int, safe_dt, time_ago
 
 
 FEATURED_PICK_LIMIT = 5
+SEOUL_TZ = ZoneInfo('Asia/Seoul')
 
 
 # 이 서비스는 종가배팅 화면 전체 응답을 만든다.
@@ -68,7 +71,7 @@ class ClosingBetService:
             stale_against_inputs = True
             stale_reason = '입력 데이터가 현재 표시 중인 AI Jongga V2 run 보다 더 최신입니다.'
 
-        selected_date = run_meta.get('run_date').isoformat() if isinstance(run_meta, dict) and run_meta.get('run_date') else datetime.now(timezone.utc).date().isoformat()
+        selected_date = run_meta.get('run_date').isoformat() if isinstance(run_meta, dict) and run_meta.get('run_date') else datetime.now(SEOUL_TZ).date().isoformat()
         return BasisPayload(
             request_date=request_date,
             selected_date=selected_date,
@@ -95,7 +98,7 @@ class ClosingBetService:
 
     # 이 메서드는 view 행 하나를 화면용 카드 데이터로 바꾼다.
     def _to_item(self, row: dict[str, Any], fallback_external_context: dict[str, Any] | None = None) -> ClosingBetItem:
-        resolved_grade = infer_signal_grade(row.get('score_total'), row.get('trading_value'), row.get('change_pct'))
+        resolved_grade, base_grade = resolve_signal_grades(row)
         references = row.get('news_items') if isinstance(row.get('news_items'), list) else []
         market_context = row.get('market_context') if isinstance(row.get('market_context'), dict) else {}
         program_context = row.get('program_context') if isinstance(row.get('program_context'), dict) else {}
@@ -105,6 +108,7 @@ class ClosingBetService:
         ai_evidence = row.get('ai_evidence') if isinstance(row.get('ai_evidence'), list) else []
         ai_breakdown = row.get('ai_breakdown') if isinstance(row.get('ai_breakdown'), dict) else {}
         score_total = safe_int(row.get('score_total'))
+        quality_grade = score_quality_grade(score_total)
         ai_text = str(row.get('ai_summary') or '').strip() or 'AI 분석 결과가 없어 규칙점수 기반 기본의견을 표시합니다.'
         policy = decide_trade_opinion(
             grade=resolved_grade,
@@ -114,9 +118,18 @@ class ClosingBetService:
             external_market_context=external_market_context,
             grade_policy=market_policy,
             fresh_news_count=len(references),
+            material_news_count=row.get('material_news_count'),
+            negative_news_count=row.get('negative_news_count'),
+            news_tone=row.get('news_tone'),
         )
         opinion = str(policy.get('opinion', '매도') or '매도')
-        raw_decision_status = str(row.get('decision_status') or policy.get('status') or 'WATCH').upper()
+        policy_status = str(policy.get('status') or 'WATCH').upper()
+        stored_decision_status = str(row.get('decision_status') or '').upper()
+        raw_decision_status = stored_decision_status or policy_status
+        if policy_status == 'NEGATIVE_NEWS_BLOCKED':
+            raw_decision_status = policy_status
+        elif stored_decision_status == 'NEWS_BLOCKED' and policy_status == 'BUY':
+            raw_decision_status = policy_status
         raw_opinion = str(row.get('ai_opinion') or '').strip()
         if raw_opinion in {'매수', '매도'} and raw_opinion != opinion:
             ai_text = f"{' '.join(policy.get('reasons', []))} {ai_text}".strip()
@@ -139,7 +152,9 @@ class ClosingBetService:
             name=str(row.get('stock_name', '')),
             market=str(row.get('market', '')),
             grade=resolved_grade,
-            base_grade=resolved_grade,
+            base_grade=base_grade,
+            quality_grade=quality_grade,
+            quality_label=f'퀄리티 {quality_grade}',
             score_total=score_total,
             score_max=TOTAL_RULE_SCORE_MAX,
             scores={
@@ -192,14 +207,6 @@ class ClosingBetService:
             )),
         )
 
-    def _candidate_sort_key(self, row: dict[str, Any]) -> tuple[int, int, int, str]:
-        return (
-            -safe_int(row.get('score_total'), 0),
-            safe_int(row.get('signal_rank'), 9999),
-            -safe_int(row.get('trading_value'), 0),
-            str(row.get('stock_code', '') or ''),
-        )
-
     # 이 메서드는 종가배팅 화면 전체 응답을 반환한다.
     def get_closing_bet(self, date_arg: str | None, grade_filter: str, query: str, page: int, page_size: int) -> ClosingBetResponse:
         request_date = normalize_date_arg(date_arg)
@@ -209,7 +216,7 @@ class ClosingBetService:
         runtime_meta = run_meta.get('runtime_meta') if isinstance(run_meta, dict) and isinstance(run_meta.get('runtime_meta'), dict) else {}
         fallback_external_context = runtime_meta.get('external_market_context') if isinstance(runtime_meta.get('external_market_context'), dict) else {}
         selected_date = basis.selected_date
-        is_today = selected_date == datetime.now(timezone.utc).date().isoformat()
+        is_today = selected_date == datetime.now(SEOUL_TZ).date().isoformat()
 
         aggregate = bundle['aggregate']
         total = safe_int(aggregate.get('total'), 0)
@@ -220,28 +227,33 @@ class ClosingBetService:
             'C': safe_int(aggregate.get('grade_c'), 0),
         }
         signals_count = safe_int(aggregate.get('signals_count'), 0)
-        featured_candidates = []
-        seen_featured: set[str] = set()
-        for row in sorted([*list(bundle['featured_rows']), *list(bundle['page_rows'])], key=self._candidate_sort_key):
-            resolved_grade = infer_signal_grade(row.get('score_total'), row.get('trading_value'), row.get('change_pct'))
-            code = str(row.get('stock_code', '') or '')
-            if resolved_grade not in {'S', 'A', 'B'} or not code or code in seen_featured:
-                continue
-            featured_candidates.append(row)
-            seen_featured.add(code)
-            if len(featured_candidates) >= FEATURED_PICK_LIMIT:
-                break
-        featured_source_rows = featured_candidates
+        selection_rows = list(bundle.get('selection_rows') or [])
+        if not selection_rows:
+            selection_rows = [*list(bundle['featured_rows']), *list(bundle['page_rows'])]
+        tracked_rows = list(bundle.get('tracked_rows') or [])
+        featured_source_rows = (
+            tracked_rows[:FEATURED_PICK_LIMIT]
+            if tracked_rows
+            else select_official_candidates(selection_rows, max_items=FEATURED_PICK_LIMIT)
+        )
         featured_items = [self._to_item(row, fallback_external_context) for row in featured_source_rows]
         featured_codes = {str(row.get('stock_code', '') or '') for row in featured_source_rows}
-        page_items = [
-            self._to_item(row, fallback_external_context)
-            for row in bundle['page_rows']
+        remaining_rows = [
+            row
+            for row in selection_rows
             if str(row.get('stock_code', '') or '') not in featured_codes
         ]
-        pagination_total = safe_int(bundle.get('list_total'), 0)
-        safe_page = safe_int(bundle.get('page'), 1)
-        total_pages = safe_int(bundle.get('total_pages'), 0)
+        pagination_total = len(remaining_rows)
+        safe_page_size = max(1, safe_int(page_size, 20))
+        requested_page = max(1, safe_int(page, 1))
+        total_pages = 0 if pagination_total == 0 else max(1, (pagination_total + safe_page_size - 1) // safe_page_size)
+        safe_page = 1 if total_pages == 0 else min(requested_page, total_pages)
+        start = (safe_page - 1) * safe_page_size
+        page_source_rows = remaining_rows[start:start + safe_page_size]
+        page_items = [
+            self._to_item(row, fallback_external_context)
+            for row in page_source_rows
+        ]
 
         return ClosingBetResponse(
             date=selected_date,
@@ -249,12 +261,12 @@ class ClosingBetService:
             status='UPDATED' if is_today else 'OLD_DATA',
             candidates_count=total,
             signals_count=signals_count,
-            buyable_signals_count=signals_count,
+            buyable_signals_count=count_buyable_candidates(featured_source_rows),
             featured_count=len(featured_items),
             grade_counts=grade_counts,
             featured_items=featured_items,
             items=page_items,
-            pagination=PaginationPayload(page=safe_page, page_size=page_size, total=pagination_total, total_pages=total_pages),
+            pagination=PaginationPayload(page=safe_page, page_size=safe_page_size, total=pagination_total, total_pages=total_pages),
             filters={'grade': grade_filter, 'q': str(query or '')},
             basis=basis,
         )

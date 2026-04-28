@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from batch.runtime_source.engine.scoring_constants import score_quality_priority
+
 
 GRADE_PRIORITY = {"S": 0, "A": 1, "B": 2, "C": 3}
 BUYABLE_STATUSES = {"BUY"}
+BUY_OPINIONS = {"\ub9e4\uc218", "BUY", "buy"}
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -27,11 +30,21 @@ def _sector_key(row: dict[str, Any], fallback_sector: str) -> str:
     return sector or "General"
 
 
+def _has_sector_metadata(row: dict[str, Any]) -> bool:
+    sector_leadership = row.get("sector_leadership") if isinstance(row.get("sector_leadership"), dict) else {}
+    sector = str(sector_leadership.get("sector_key", "") or row.get("sector", "") or "").strip()
+    return bool(sector)
+
+
+def is_buyable_candidate(row: dict[str, Any]) -> bool:
+    status = str(row.get("decision_status", "") or "").upper()
+    opinion = str(row.get("ai_opinion", "") or "").strip()
+    return status in BUYABLE_STATUSES or opinion in BUY_OPINIONS
+
+
 def candidate_priority(row: dict[str, Any], *, fallback_sector: str = "General") -> tuple[Any, ...]:
     base_grade = str(row.get("base_grade", row.get("grade", "C")) or "C").upper()
     final_grade = str(row.get("grade", "C") or "C").upper()
-    decision_status = str(row.get("decision_status", "") or "").upper()
-    ai_opinion = str(row.get("ai_opinion", "") or "").strip()
     score_total = _safe_int(row.get("score_total"), 0)
     trading_value = _safe_int(row.get("trading_value"), 0)
     change_pct = _safe_float(row.get("change_pct"), 0.0)
@@ -41,7 +54,7 @@ def candidate_priority(row: dict[str, Any], *, fallback_sector: str = "General")
     score_news_attention = _safe_int(row.get("score_news_attention"), 0)
     fresh_news_count = len(row.get("news_items") if isinstance(row.get("news_items"), list) else [])
 
-    buyable = 1 if (ai_opinion == "매수" and decision_status in BUYABLE_STATUSES) else 0
+    buyable = 1 if is_buyable_candidate(row) else 0
     watchable = 1 if base_grade in {"S", "A", "B"} else 0
     context_score = (score_sector * 3) + (score_leader * 3) + (score_intraday * 2) + (score_news_attention * 2)
     news_bonus = 2 if fresh_news_count > 0 else 0
@@ -51,6 +64,7 @@ def candidate_priority(row: dict[str, Any], *, fallback_sector: str = "General")
         -watchable,
         GRADE_PRIORITY.get(base_grade, 9),
         GRADE_PRIORITY.get(final_grade, 9),
+        score_quality_priority(score_total),
         -(score_total + context_score + news_bonus + liquidity_bonus),
         -change_pct,
         -trading_value,
@@ -91,6 +105,19 @@ def select_top_candidates(
             selected_codes.add(code)
 
     return selected[:max_items]
+
+
+def select_official_candidates(
+    rows: list[dict[str, Any]],
+    *,
+    max_items: int = 5,
+    fallback_sector: str = "General",
+) -> list[dict[str, Any]]:
+    return select_top_candidates(rows, max_items=max_items, fallback_sector=fallback_sector)
+
+
+def count_buyable_candidates(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if is_buyable_candidate(row))
 
 
 # Design Ref: Design §6.2 Module C — NXT 가능 + Top 2 (섹터 다양성, 강세 섹터 예외)
@@ -147,9 +174,7 @@ def select_top_2_sector_diverse(
         if require_nxt_eligible and not bool(row.get("nxt_eligible", False)):
             continue
         if require_buy_status:
-            status = str(row.get("decision_status", "") or "").upper()
-            opinion = str(row.get("ai_opinion", "") or "").strip()
-            if not (status in BUYABLE_STATUSES or opinion == "매수"):
+            if not is_buyable_candidate(row):
                 continue
         filtered.append(row)
 
@@ -178,6 +203,9 @@ def select_top_2_sector_diverse(
     same_sector_alt = _same_sector_strong_exception(first, ordered, thresholds)
     if same_sector_alt is not None:
         return [first, same_sector_alt]
+
+    if not any(_has_sector_metadata(row) for row in ordered):
+        return ordered[:2]
 
     # 3) 후보 부족
     return [first]

@@ -123,7 +123,7 @@ def _build_llm_prompt(events: list[dict[str, Any]]) -> str:
 def _llm_summarize(events: list[dict[str, Any]]) -> tuple[str, str] | None:
     """LLM 으로 summary/content 재생성. 실패 시 None.
 
-    chatgpt.py (프로젝트 로컬, OAuth 기반 gpt-5.4) 를 effort=low 로 호출.
+    chatgpt.py (프로젝트 로컬, OAuth 기반 기본 Codex 모델) 를 effort=low 로 호출.
     """
     if os.getenv("EXECUTION_HISTORY_LLM", "1").strip() in {"0", "false", "no", "off"}:
         return None

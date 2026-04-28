@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -26,33 +26,106 @@ for _p in (PROJECT_ROOT, BATCH_RUNTIME_ROOT):
 logger = logging.getLogger("runner_sell")
 
 
-def load_yesterday_positions() -> list[dict]:
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _position_from_order_row(row: dict) -> dict | None:
+    code = str(row.get("stock_code", "") or "").zfill(6)
+    if not code or code == "000000":
+        return None
+
+    filled_qty = _to_int(row.get("filled_qty"), 0)
+    ordered_qty = _to_int(row.get("ordered_qty"), 0)
+    account_qty = _to_int(row.get("available_qty"), 0) or _to_int(row.get("quantity"), 0)
+
+    if filled_qty > 0:
+        qty = filled_qty
+        avg_price = _to_float(row.get("filled_avg_price"), 0.0)
+    elif ordered_qty > 0 and account_qty > 0:
+        qty = min(account_qty, ordered_qty)
+        avg_price = _to_float(row.get("account_avg_price"), 0.0)
+    else:
+        return None
+
+    if qty <= 0:
+        return None
+    return {
+        "stock_code": code,
+        "qty": qty,
+        "avg_price": avg_price,
+    }
+
+
+def load_yesterday_positions(target_date: date | None = None) -> list[dict]:
     """전일 매수한 포지션 리스트.
     간이 구현: auto_orders 테이블에서 BUY FILLED/PARTIAL 조회.
     실제 운영에서는 키움 계좌 잔고 API로 재확인 권장.
     """
     from backend.app.core.database import db_connection
-    yesterday = (datetime.now(ZoneInfo("Asia/Seoul")).date() - timedelta(days=1)).isoformat()
+    today = target_date or datetime.now(ZoneInfo("Asia/Seoul")).date()
     positions: list[dict] = []
     try:
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT stock_code,
-                           SUM(filled_qty) AS qty,
-                           AVG(NULLIF(filled_avg_price,0)) AS avg_price
-                    FROM auto_orders
-                    WHERE set_date = %s AND side='BUY' AND filled_qty > 0
-                    GROUP BY stock_code
-                """, (yesterday,))
+                    WITH target_order_date AS (
+                      SELECT max(set_date) AS set_date
+                      FROM auto_orders
+                      WHERE set_date < %s::date
+                        AND side = 'BUY'
+                    ),
+                    order_rows AS (
+                      SELECT
+                        o.stock_code,
+                        SUM(coalesce(o.filled_qty, 0)) AS filled_qty,
+                        SUM(
+                          CASE
+                            WHEN upper(coalesce(o.status, '')) IN ('FAILED', 'CANCELLED', 'CANCELED', 'REJECTED')
+                              THEN coalesce(o.filled_qty, 0)
+                            ELSE greatest(coalesce(o.qty, 0), coalesce(o.filled_qty, 0))
+                          END
+                        ) AS ordered_qty,
+                        AVG(NULLIF(o.filled_avg_price, 0)) AS filled_avg_price
+                      FROM auto_orders o
+                      JOIN target_order_date d ON o.set_date = d.set_date
+                      WHERE o.side = 'BUY'
+                      GROUP BY o.stock_code
+                    ),
+                    account_positions AS (
+                      SELECT
+                        ticker AS stock_code,
+                        SUM(coalesce(quantity, 0)) AS quantity,
+                        SUM(coalesce(available_qty, 0)) AS available_qty,
+                        AVG(NULLIF(avg_price, 0)) AS account_avg_price
+                      FROM kiwoom_account_positions_latest
+                      GROUP BY ticker
+                    )
+                    SELECT
+                      o.stock_code,
+                      o.filled_qty,
+                      o.ordered_qty,
+                      o.filled_avg_price,
+                      coalesce(p.quantity, 0) AS quantity,
+                      coalesce(p.available_qty, 0) AS available_qty,
+                      coalesce(p.account_avg_price, 0) AS account_avg_price
+                    FROM order_rows o
+                    LEFT JOIN account_positions p ON p.stock_code = o.stock_code
+                """, (today.isoformat(),))
                 for row in cur.fetchall():
-                    qty = int(row.get("qty") or 0)
-                    if qty > 0:
-                        positions.append({
-                            "stock_code": row["stock_code"],
-                            "qty": qty,
-                            "avg_price": float(row.get("avg_price") or 0),
-                        })
+                    position = _position_from_order_row(dict(row))
+                    if position:
+                        positions.append(position)
     except Exception as exc:
         logger.warning("auto_orders 로드 실패, 키움 계좌에서 재조회 필요: %s", exc)
     return positions

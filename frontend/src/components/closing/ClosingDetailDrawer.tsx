@@ -82,7 +82,10 @@ export function ClosingDetailDrawer({ item, open, onClose }: ClosingDetailDrawer
         <span className="inline-flex items-center gap-2">
           <span className="truncate">{item.name}</span>
           <Badge variant={gradeVariant(item.grade)} size="xs">
-            {item.grade}
+            진입 {item.grade}
+          </Badge>
+          <Badge variant={gradeVariant(item.quality_grade)} size="xs">
+            퀄리티 {item.quality_grade}
           </Badge>
           <Badge variant="neutral" size="xs">
             {item.market}
@@ -144,6 +147,14 @@ export function ClosingDetailDrawer({ item, open, onClose }: ClosingDetailDrawer
                   <span className="text-text-muted">/{item.score_max}</span>
                 </span>
               }
+            />
+            <MetricRow
+              label="진입등급"
+              value={<Badge variant={gradeVariant(item.grade)} size="xs">{item.grade}</Badge>}
+            />
+            <MetricRow
+              label="점수퀄리티"
+              value={<Badge variant={gradeVariant(item.quality_grade)} size="xs">{item.quality_label || item.quality_grade}</Badge>}
             />
           </div>
         </section>

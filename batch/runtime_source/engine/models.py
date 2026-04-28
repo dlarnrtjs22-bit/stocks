@@ -354,6 +354,7 @@ class ScoreDetail:
             "leader": self.leader,
             "intraday": self.intraday,
             "news_attention": self.news_attention,
+            "material_news_count": self.material_news_count,
             "llm_reason": self.llm_reason,
             "llm_meta": self.llm_meta,
             "total": self.total,

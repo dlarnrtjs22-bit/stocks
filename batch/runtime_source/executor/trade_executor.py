@@ -39,6 +39,11 @@ from executor.alerts import notify, wait_for_cancel
 
 
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
+SELL_DEFENSE_DROP_PCT = -1.0
+SELL_STRENGTH_CONFIRM_PCT = 1.0
+SELL_RISING_CONFIRM_PCT = 0.5
+SELL_TRAIL_PULLBACK_PCT = 0.8
+SELL_TRAIL_PROFIT_FLOOR_PCT = 0.3
 
 
 def _record_order_to_db(req: OrderRequest, result: OrderResult, tranche_name: str) -> None:
@@ -196,6 +201,39 @@ class TradeExecutor:
     def __init__(self, order_client: KiwoomOrderClient | None = None) -> None:
         self._client = order_client or KiwoomOrderClient()
 
+    def _order_reserved_qty(self, result: OrderResult, requested_qty: int) -> int:
+        status = str(result.status or "").upper()
+        if status in {"FAILED", "CANCELLED", "CANCELED", "REJECTED"}:
+            return 0
+        filled_qty = int(result.filled_qty or 0)
+        if filled_qty > 0:
+            return min(int(requested_qty), filled_qty)
+        return int(requested_qty)
+
+    def _snapshot_price(self, snap: QuoteSnapshot) -> int:
+        return int(snap.last or snap.bid1 or snap.midpoint() or 0)
+
+    def _change_pct(self, price: int, reference: int) -> float | None:
+        if price <= 0 or reference <= 0:
+            return None
+        return (price - reference) / reference * 100.0
+
+    def _place_sell_and_reserve(
+        self,
+        results: list[OrderResult],
+        stock_code: str,
+        qty: int,
+        price: int,
+        tag: str,
+        paper: bool,
+        dry_run: bool,
+    ) -> int:
+        if qty <= 0 or price <= 0:
+            return 0
+        result = self._place_sell(stock_code, qty, price, tag, paper, dry_run)
+        results.append(result)
+        return self._order_reserved_qty(result, qty)
+
     # ─── 매수 ─────────────────────────────────────────
     def execute_buy_tranche(
         self,
@@ -263,71 +301,185 @@ class TradeExecutor:
         *,
         dry_run: bool = False,
     ) -> list[OrderResult]:
-        """Design §5.5 — 08:00 50% → 08:02 -1% → 08:04 -2% → 08:05 taker → 08:06+ 추격"""
+        """Sell next-day positions with defensive and rising-open branches."""
         decision = guards.check_allowed("sell", {"stock": stock_code})
         if not decision.allowed:
             notify(f":no_entry: SELL {stock_code} blocked: {decision.reason}")
             return []
 
-        results: list[OrderResult] = []
-        remaining = position_qty
+        return self._execute_adaptive_sell_schedule(
+            position_qty=position_qty,
+            stock_code=stock_code,
+            reference_close=reference_close,
+            paper=decision.paper,
+            dry_run=dry_run,
+        )
 
-        # 08:00 초기 50%
+    def _execute_adaptive_sell_schedule(
+        self,
+        position_qty: int,
+        stock_code: str,
+        reference_close: int,
+        *,
+        paper: bool,
+        dry_run: bool,
+    ) -> list[OrderResult]:
+        results: list[OrderResult] = []
+        remaining = int(position_qty)
+        if remaining <= 0:
+            return results
+
         self._wait_until(8, 0)
-        snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
+        first_snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
+        first_price = self._snapshot_price(first_snap)
+        first_change = self._change_pct(first_price, reference_close)
+        if first_change is not None and first_change <= SELL_DEFENSE_DROP_PCT:
+            price = compute_sell_price(first_snap, "BID1_TAKER")
+            qty = remaining
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, qty, price, "S0-defense-drop", paper, dry_run
+            )
+            if remaining <= 0:
+                return results
+
+        self._wait_until(8, 2)
+        second_snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
+        second_price = self._snapshot_price(second_snap)
+        second_change = self._change_pct(second_price, reference_close)
+        if second_change is not None and second_change <= SELL_DEFENSE_DROP_PCT:
+            price = compute_sell_price(second_snap, "BID1_TAKER")
+            qty = remaining
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, qty, price, "S0-defense-drop", paper, dry_run
+            )
+            if remaining <= 0:
+                return results
+
+        rising_from_reference = second_change is not None and second_change >= SELL_STRENGTH_CONFIRM_PCT
+        rising_from_open = (
+            first_price > 0
+            and second_price > 0
+            and second_price >= int(first_price * (1.0 + SELL_RISING_CONFIRM_PCT / 100.0))
+        )
+        if rising_from_reference or rising_from_open:
+            remaining = self._execute_trailing_sell(
+                results=results,
+                stock_code=stock_code,
+                remaining=remaining,
+                reference_close=reference_close,
+                high_price=max(first_price, second_price),
+                paper=paper,
+                dry_run=dry_run,
+            )
+        else:
+            remaining = self._execute_staged_sell(
+                results=results,
+                stock_code=stock_code,
+                remaining=remaining,
+                first_sell_snap=second_snap,
+                paper=paper,
+                dry_run=dry_run,
+            )
+
+        self._wait_until(9, 0, 30)
+        if remaining > 0:
+            idem = f"SELL_IOC_{stock_code}_{datetime.now(SEOUL_TZ).strftime('%Y%m%d')}"
+            result = self._client.place_market_ioc(
+                stock_code, "SELL", remaining, "NXT",
+                idempotency_key=idem, paper_mode=(paper or dry_run),
+            )
+            ioc_req = OrderRequest(
+                ticker=stock_code, side="SELL", qty=remaining, price=0, venue="NXT",
+                order_type="MARKET_IOC", idempotency_key=idem, note="IOC-final",
+            )
+            _record_order_to_db(ioc_req, result, "IOC")
+            results.append(result)
+
+        return results
+
+    def _execute_trailing_sell(
+        self,
+        *,
+        results: list[OrderResult],
+        stock_code: str,
+        remaining: int,
+        reference_close: int,
+        high_price: int,
+        paper: bool,
+        dry_run: bool,
+    ) -> int:
+        for minute in range(6, 50):
+            self._wait_until(8, minute)
+            if remaining <= 0:
+                break
+            snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
+            current_price = self._snapshot_price(snap)
+            if current_price <= 0:
+                continue
+            if current_price > high_price:
+                high_price = current_price
+                continue
+
+            pullback = high_price > 0 and current_price <= int(
+                high_price * (1.0 - SELL_TRAIL_PULLBACK_PCT / 100.0)
+            )
+            current_change = self._change_pct(current_price, reference_close)
+            profit_floor = current_change is not None and current_change <= SELL_TRAIL_PROFIT_FLOOR_PCT
+            if pullback or profit_floor:
+                price = compute_sell_price(snap, "BID1_TAKER")
+                qty = remaining
+                remaining -= self._place_sell_and_reserve(
+                    results, stock_code, qty, price, "S-trail-stop", paper, dry_run
+                )
+                break
+        return remaining
+
+    def _execute_staged_sell(
+        self,
+        *,
+        results: list[OrderResult],
+        stock_code: str,
+        remaining: int,
+        first_sell_snap: QuoteSnapshot,
+        paper: bool,
+        dry_run: bool,
+    ) -> int:
         half = remaining // 2
         if half > 0:
-            price = compute_sell_price(snap, "LAST_MINUS_PCT", discount_pct=0.0)
-            results.append(self._place_sell(stock_code, half, price, "S0-initial50%", decision.paper, dry_run))
-            remaining -= half
+            price = compute_sell_price(first_sell_snap, "LAST_MINUS_PCT", discount_pct=0.0)
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, half, price, "S0-initial50%", paper, dry_run
+            )
 
-        # 08:02 -1% 잔량
-        self._wait_until(8, 2)
-        if remaining > 0:
-            snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
-            price = compute_sell_price(snap, "LAST_MINUS_PCT", discount_pct=1.0)
-            results.append(self._place_sell(stock_code, remaining, price, "S1-minus1pct", decision.paper, dry_run))
-
-        # 08:04 -2% 잔량
         self._wait_until(8, 4)
         if remaining > 0:
             snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
-            price = compute_sell_price(snap, "LAST_MINUS_PCT", discount_pct=2.0)
-            results.append(self._place_sell(stock_code, remaining, price, "S2-minus2pct", decision.paper, dry_run))
+            price = compute_sell_price(snap, "LAST_MINUS_PCT", discount_pct=1.0)
+            qty = remaining
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, qty, price, "S1-minus1pct", paper, dry_run
+            )
 
-        # 08:05 테이커
         self._wait_until(8, 5)
         if remaining > 0:
             snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
             price = compute_sell_price(snap, "BID1_TAKER")
-            results.append(self._place_sell(stock_code, remaining, price, "S3-taker", decision.paper, dry_run))
+            qty = remaining
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, qty, price, "S3-taker", paper, dry_run
+            )
 
-        # 08:06~08:49 1분마다 매수1호가 재발주 (추격)
         for minute in range(6, 50):
             self._wait_until(8, minute)
             if remaining <= 0:
                 break
             snap = self._client.get_quote_snapshot(stock_code, venue="NXT")
             price = compute_sell_price(snap, "BID1_TAKER")
-            if price > 0:
-                results.append(self._place_sell(stock_code, remaining, price, f"S-chase-{minute:02d}", decision.paper, dry_run))
-
-        # 09:00:30 NXT 메인 시장가 IOC 잔량 청산
-        self._wait_until(9, 0, 30)
-        if remaining > 0:
-            idem = f"SELL_IOC_{stock_code}_{datetime.now(SEOUL_TZ).strftime('%Y%m%d')}"
-            r = self._client.place_market_ioc(
-                stock_code, "SELL", remaining, "NXT",
-                idempotency_key=idem, paper_mode=(decision.paper or dry_run),
+            qty = remaining
+            remaining -= self._place_sell_and_reserve(
+                results, stock_code, qty, price, f"S-chase-{minute:02d}", paper, dry_run
             )
-            ioc_req = OrderRequest(
-                ticker=stock_code, side="SELL", qty=remaining, price=0, venue="NXT",
-                order_type="MARKET_IOC", idempotency_key=idem, note="IOC-final",
-            )
-            _record_order_to_db(ioc_req, r, "IOC")
-            results.append(r)
-
-        return results
+        return remaining
 
     def check_emergency_stop(
         self, stock_code: str, reference_close: int, threshold_pct: float = -3.0
